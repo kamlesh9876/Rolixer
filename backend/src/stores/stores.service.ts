@@ -1,11 +1,13 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Inject, CACHE_MANAGER } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, FindManyOptions, Like } from 'typeorm';
+import { Repository, FindManyOptions, Like, In } from 'typeorm';
 import { Store } from './entities/store.entity';
 import { User } from '../users/entities/user.entity';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { UserRole } from '../users/entities/user.entity';
+import { Cache } from 'cache-manager';
+import { RedisService } from '../redis/redis.service';
 
 type StoreQueryOptions = {
   search?: string;
@@ -19,12 +21,35 @@ type StoreQueryOptions = {
 
 @Injectable()
 export class StoresService {
+  private readonly CACHE_TTL = 300; // 5 minutes
+  private readonly RATING_CACHE_PREFIX = 'store_rating_';
+  private readonly STORE_CACHE_PREFIX = 'store_';
+  private readonly STORE_LIST_CACHE_PREFIX = 'store_list_';
+
   constructor(
     @InjectRepository(Store)
     private storesRepository: Repository<Store>,
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    @Inject(CACHE_MANAGER)
+    private cacheManager: Cache,
   ) {}
+
+  private getStoreCacheKey(storeId: string): string {
+    return `${this.STORE_CACHE_PREFIX}${storeId}`;
+  }
+
+  private getStoreListCacheKey(query: any): string {
+    const queryString = Object.entries(query)
+      .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+      .map(([key, value]) => `${key}=${value}`)
+      .join('&');
+    return `${this.STORE_LIST_CACHE_PREFIX}${queryString}`;
+  }
+
+  private getRatingCacheKey(storeId: string): string {
+    return `${this.RATING_CACHE_PREFIX}${storeId}`;
+  }
 
   async create(createStoreDto: CreateStoreDto, userId: string): Promise<Store> {
     const owner = await this.usersRepository.findOne({ where: { id: userId } });
@@ -47,6 +72,13 @@ export class StoresService {
   }
 
   async findAll(query: StoreQueryOptions = {}): Promise<{ data: Store[]; total: number }> {
+    const cacheKey = this.getStoreListCacheKey(query);
+    const cached = await this.cacheManager.get<{ data: Store[]; total: number }>(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
     const {
       search,
       status,
@@ -80,24 +112,130 @@ export class StoresService {
       take: limit,
     });
 
-    return { data, total };
+    const result = { data, total };
+    await this.cacheManager.set(cacheKey, result, this.CACHE_TTL);
+    return result;
   }
 
-  async findOne(id: string): Promise<Store> {
+  async findOne(id: string, includeRatings = true): Promise<Store> {
+    const cacheKey = this.getStoreCacheKey(id);
+    const cachedStore = await this.cacheManager.get<Store>(cacheKey);
+    
+    if (cachedStore) {
+      return cachedStore;
+    }
+
     const store = await this.storesRepository.findOne({
       where: { id },
-      relations: ['owner', 'ratings', 'ratings.user'],
+      relations: includeRatings ? ['owner', 'ratings', 'ratings.user'] : ['owner'],
     });
 
     if (!store) {
       throw new NotFoundException(`Store with ID ${id} not found`);
     }
 
+    // Cache the store without ratings to keep the cache small
+    if (includeRatings) {
+      const { ratings, ...storeWithoutRatings } = store;
+      await this.cacheManager.set(cacheKey, storeWithoutRatings, this.CACHE_TTL);
+    } else {
+      await this.cacheManager.set(cacheKey, store, this.CACHE_TTL);
+    }
+
     return store;
   }
 
+  async calculateStoreRating(storeId: string): Promise<{ average: number; count: number }> {
+    const cacheKey = this.getRatingCacheKey(storeId);
+    const cachedRating = await this.cacheManager.get<{ average: number; count: number }>(cacheKey);
+    
+    if (cachedRating) {
+      return cachedRating;
+    }
+
+    const result = await this.storesRepository
+      .createQueryBuilder('store')
+      .select('AVG(rating.rating)', 'average')
+      .addSelect('COUNT(rating.id)', 'count')
+      .leftJoin('store.ratings', 'rating')
+      .where('store.id = :storeId', { storeId })
+      .groupBy('store.id')
+      .getRawOne();
+
+    const rating = {
+      average: result ? parseFloat(parseFloat(result.average || '0').toFixed(2)) : 0,
+      count: result ? parseInt(result.count, 10) : 0,
+    };
+
+    await this.cacheManager.set(cacheKey, rating, this.CACHE_TTL);
+    return rating;
+  }
+
+  async getStoresWithRatings(storeIds: string[]): Promise<Map<string, { average: number; count: number }>> {
+    const result = new Map<string, { average: number; count: number }>();
+    
+    // Check cache first
+    const cachedRatings = await Promise.all(
+      storeIds.map(id => 
+        this.cacheManager.get<{ average: number; count: number }>(this.getRatingCacheKey(id))
+          .then(rating => rating ? { id, rating } : null)
+      )
+    );
+
+    // Process cached ratings
+    const cachedIds = new Set<string>();
+    for (const item of cachedRatings) {
+      if (item) {
+        result.set(item.id, item.rating);
+        cachedIds.add(item.id);
+      }
+    }
+
+    // Find uncached store IDs
+    const uncachedIds = storeIds.filter(id => !cachedIds.has(id));
+    
+    if (uncachedIds.length > 0) {
+      // Batch query for uncached ratings
+      const ratings = await this.storesRepository
+        .createQueryBuilder('store')
+        .select('store.id', 'storeId')
+        .addSelect('AVG(rating.rating)', 'average')
+        .addSelect('COUNT(rating.id)', 'count')
+        .leftJoin('store.ratings', 'rating')
+        .where('store.id IN (:...ids)', { ids: uncachedIds })
+        .groupBy('store.id')
+        .getRawMany();
+
+      // Process and cache the results
+      for (const rating of ratings) {
+        const ratingData = {
+          average: parseFloat(parseFloat(rating.average || '0').toFixed(2)),
+          count: parseInt(rating.count, 10),
+        };
+        
+        result.set(rating.storeId, ratingData);
+        await this.cacheManager.set(
+          this.getRatingCacheKey(rating.storeId), 
+          ratingData, 
+          this.CACHE_TTL
+        );
+      }
+    }
+
+    return result;
+  }
+
   async update(id: string, updateStoreDto: UpdateStoreDto, userId: string): Promise<Store> {
-    const store = await this.findOne(id);
+    const store = await this.findOne(id, false);
+    
+    // Invalidate cache
+    await Promise.all([
+      this.cacheManager.del(this.getStoreCacheKey(id)),
+      this.cacheManager.del(this.getRatingCacheKey(id)),
+      // Invalidate any list caches that might include this store
+      this.cacheManager.store.keys(`${this.STORE_LIST_CACHE_PREFIX}*`)
+        .then(keys => Promise.all(keys.map(key => this.cacheManager.del(key)))),
+    ]);
     const user = await this.usersRepository.findOne({ where: { id: userId } });
 
     if (!user) {

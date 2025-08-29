@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -7,13 +7,38 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import LoginPage from './pages/auth/LoginPage';
-import RegisterPage from './pages/auth/RegisterPage';
-import DashboardPage from './pages/dashboard/DashboardPage';
-import ProtectedRoute from './components/ProtectedRoute';
+import { QueryClientProvider as AppQueryClientProvider } from './providers/QueryClientProvider';
 
-// Create a client for React Query
-const queryClient = new QueryClient();
+// Lazy load pages for better code splitting
+const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
+const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
+const ProtectedRoute = lazy(() => import('./components/ProtectedRoute'));
+
+// Loading component for Suspense fallback
+const LoadingFallback = () => (
+  <Box
+    display="flex"
+    justifyContent="center"
+    alignItems="center"
+    minHeight="100vh"
+    width="100%"
+  >
+    <CircularProgress />
+  </Box>
+);
+
+// Configure React Query
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5 minutes
+      cacheTime: 10 * 60 * 1000, // 10 minutes
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 // Create a theme instance
 const theme = createTheme({
@@ -39,69 +64,66 @@ const theme = createTheme({
   },
 });
 
-// Main App component
+// Main App component with Suspense
 const AppContent = () => {
   const { isAuthenticated, loading } = useAuth();
 
   if (loading) {
-    return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        minHeight="100vh"
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingFallback />;
   }
 
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-      />
-      <Route 
-        path="/register" 
-        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <RegisterPage />} 
-      />
-      <Route 
-        path="/register/:type" 
-        element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <RegisterPage />} 
-      />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <Outlet />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        {/* Add more protected routes here */}
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <Suspense fallback={<LoadingFallback />}>
+      <Routes>
+        <Route
+          path="/login"
+          element={!isAuthenticated ? <LoginPage /> : <Navigate to="/dashboard" />}
+        />
+        <Route
+          path="/register"
+          element={!isAuthenticated ? <RegisterPage /> : <Navigate to="/dashboard" />}
+        />
+        <Route
+          path="/dashboard/*"
+          element={
+            <Suspense fallback={<LoadingFallback />}>
+              <ProtectedRoute>
+                <DashboardPage />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/"
+          element={
+            isAuthenticated ? (
+              <Navigate to="/dashboard" />
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </Suspense>
   );
 };
 
 // App wrapper with providers
-const App = () => {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
+const App = () => (
+  <AppQueryClientProvider>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AuthProvider>
         <Router>
-          <AuthProvider>
-            <AppContent />
-          </AuthProvider>
+          <AppContent />
         </Router>
-        <ReactQueryDevtools initialIsOpen={false} />
-      </ThemeProvider>
-    </QueryClientProvider>
-  );
-};
+      </AuthProvider>
+    </ThemeProvider>
+    {process.env.NODE_ENV === 'development' && (
+      <ReactQueryDevtools initialIsOpen={false} position="bottom-right" />
+    )}
+  </AppQueryClientProvider>
+);
 
 export default App;

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
+import { useApiMutation } from '../../hooks/useApi';
 import {
   Container,
   Box,
@@ -100,8 +101,8 @@ const storeInfoSchema = Yup.object({
     .required('Address is required'),
 });
 
-// Define the form values type
-type FormValues = {
+// Define the form values interface
+interface FormValues {
   userType: UserType;
   name: string;
   email: string;
@@ -117,33 +118,110 @@ type FormValues = {
   enable2FA: boolean;
   phoneFor2FA: string;
   acceptTerms: boolean;
+  [key: string]: any; // Add index signature for dynamic access
+}
+
+// Define the RegisterData interface for the API request
+interface RegisterData extends Omit<FormValues, 'securityQuestion1' | 'securityAnswer1' | 'securityQuestion2' | 'securityAnswer2'> {
+  securityQuestions: Array<{
+    question: string;
+    answer: string;
+  }>;
+}
+
+// Memoized form steps with validation
+const useFormSteps = (schemas: any) => {
+  return useMemo(() => [
+    { 
+      label: 'Account Type',
+      validate: () => true
+    },
+    { 
+      label: 'Personal Info',
+      validate: (values: FormValues) => {
+        try {
+          schemas.personalInfo.validateSync(values, { abortEarly: false });
+          return true;
+        } catch (err) {
+          return false;
+        }
+      }
+    },
+    { 
+      label: 'Password',
+      validate: (values: FormValues) => {
+        try {
+          schemas.password.validateSync(values, { abortEarly: false });
+          return true;
+        } catch (err) {
+          return false;
+        }
+      }
+    },
+    { 
+      label: 'Store Info', 
+      validate: (values: FormValues) => {
+        if (values.userType !== 'STORE_OWNER') return true;
+        try {
+          schemas.storeInfo.validateSync(values, { abortEarly: false });
+          return true;
+        } catch (err) {
+          return false;
+        }
+      }
+    },
+    { 
+      label: 'Security', 
+      validate: (values: FormValues) => {
+        try {
+          schemas.securityInfo.validateSync(values, { abortEarly: false });
+          return true;
+        } catch (err) {
+          return false;
+        }
+      }
+    },
+    { 
+      label: 'Terms', 
+      validate: (values: FormValues) => {
+        try {
+          schemas.terms.validateSync(values, { abortEarly: false });
+          return true;
+        } catch (err) {
+          return false;
+        }
+      }
+    },
+  ], [schemas]);
 };
 
-const RegisterPage: React.FC = () => {
-  const [searchParams] = useSearchParams();
-  const { type: urlType } = useParams<{ type?: string }>();
+const RegisterPage: React.FC = React.memo(() => {
   const navigate = useNavigate();
-  const [activeStep, setActiveStep] = useState(0);
-  const [error, setError] = useState('');
-  const [userType, setUserType] = useState<UserType>(() => {
-    // First check URL params, then query params
-    const type = urlType || searchParams.get('type') || '';
-    return type.toUpperCase() === 'STORE_OWNER' ? 'STORE_OWNER' : 'CUSTOMER';
-  });
-
-  useEffect(() => {
-    const typeFromQuery = searchParams.get('type');
-    if (typeFromQuery && !urlType) {
-      // Replace URL to use path parameter instead of query parameter
-      navigate(`/register/${typeFromQuery}`, { replace: true });
-    }
-  }, [searchParams, urlType, navigate]);
-  
+  const [searchParams] = useSearchParams();
+  const [isLoading, setIsLoading] = useState(false);
   const { register } = useAuth();
+  const [activeStep, setActiveStep] = useState(0);
+  const [formData, setFormData] = useState<Partial<FormValues>>({});
+  const [error, setError] = useState<string | null>(null);
+  
+  // Form steps with validation schemas
+  const schemas = useMemo(() => ({
+    personalInfo: personalInfoSchema,
+    password: passwordSchema,
+    storeInfo: storeInfoSchema,
+    securityInfo: securitySchema,
+    terms: Yup.object({
+      acceptTerms: Yup.boolean()
+        .oneOf([true], 'You must accept the terms and conditions')
+        .required('Required')
+    }),
+  }), []);
+
+  const formSteps = useFormSteps(schemas);
 
   const formik = useFormik<FormValues>({
     initialValues: {
-      userType: userType,
+      userType: 'CUSTOMER' as UserType,
       name: '',
       email: '',
       phone: '',
@@ -158,184 +236,101 @@ const RegisterPage: React.FC = () => {
       enable2FA: false,
       phoneFor2FA: '',
       acceptTerms: false,
+      ...formData
     },
-    validationSchema: Yup.lazy((values) => {
-      if (activeStep === 0) return Yup.object({}); // User type selection - no validation needed
-      if (activeStep === 1) return personalInfoSchema;
-      if (activeStep === 2) return passwordSchema;
-      if (activeStep === 3 && values.userType === 'STORE_OWNER') return storeInfoSchema;
-      if (activeStep === (values.userType === 'STORE_OWNER' ? 4 : 3)) return securitySchema;
-      return Yup.object({});
-    }),
-    onSubmit: async (values, { setSubmitting }) => {
+    validationSchema: [
+      Yup.object({
+        userType: Yup.string().required('Please select a user type')
+      }),
+      personalInfoSchema,
+      passwordSchema,
+      storeInfoSchema,
+      securitySchema,
+      Yup.object({
+        acceptTerms: Yup.boolean()
+          .oneOf([true], 'You must accept the terms and conditions')
+          .required('Required')
+      })
+    ][activeStep],
+    onSubmit: async (values) => {
       try {
-        setError('');
-        
-        // Check if we're on the final step
-        const totalSteps = values.userType === 'STORE_OWNER' ? 5 : 4;
-        const isLastStep = activeStep === totalSteps - 1;
-        
-        if (!isLastStep) {
-          await handleNext();
-          return;
+        if (activeStep === steps.length - 1) {
+          await register(values);
+          navigate('/dashboard');
+        } else {
+          setFormData({ ...formData, ...values });
+          setActiveStep((prev) => prev + 1);
         }
-        
-        // On final step, submit the form
-        await register({
-          name: values.name,
-          email: values.email,
-          phone: values.phone,
-          password: values.password,
-          userType: values.userType as UserType,
-          securityQuestions: [
-            { question: values.securityQuestion1, answer: values.securityAnswer1 },
-            { question: values.securityQuestion2, answer: values.securityAnswer2 }
-          ],
-          enable2FA: values.enable2FA,
-          phoneFor2FA: values.phoneFor2FA,
-          ...(values.userType === 'STORE_OWNER' && {
-            storeName: values.storeName,
-            address: values.address,
-          }),
-        });
-        
-        navigate('/dashboard');
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to create an account. Please try again.';
-        setError(errorMessage);
-      } finally {
-        setSubmitting(false);
+      } catch (err: any) {
+        setError(err?.response?.data?.message || err?.message || 'An error occurred');
       }
     },
   });
-
-  const handleUserTypeSelect = (selectedType: UserType) => {
-    setUserType(selectedType);
-    formik.setFieldValue('userType', selectedType);
-    // Move to next step after selecting user type
-    setActiveStep(1);
-  };
-
-  const handleBack = () => {
-    setActiveStep((prevStep) => Math.max(0, prevStep - 1));
-  };
-
-  const handleNext = async (): Promise<void> => {
-    try {
-      // Skip validation for user type step
-      if (activeStep === 0) {
-        setActiveStep(1);
-        return;
-      }
-
-      // Mark all current step fields as touched
-      const fieldsToTouch: Record<string, boolean> = {};
-      const currentSchema = getCurrentStepSchema(formik.values);
-      
-      if (currentSchema && 'fields' in currentSchema && currentSchema.fields) {
-        Object.keys(currentSchema.fields).forEach((field: string) => {
-          fieldsToTouch[field] = true;
-        });
-      }
-      
-      await formik.setTouched(fieldsToTouch);
-      
-      // Validate current step
-      const errors = await formik.validateForm();
-      const currentStepErrors: Record<string, string> = {};
-      
-      // Filter errors for current step fields only
-      if (currentSchema && currentSchema.fields && typeof currentSchema.fields === 'object') {
-        const schemaFields = currentSchema.fields as Record<string, unknown>;
-        Object.keys(errors).forEach(key => {
-          if (key in schemaFields && errors[key as keyof FormValues]) {
-            currentStepErrors[key] = errors[key as keyof FormValues] as string;
-          }
-        });
-      }
-    
-      if (Object.keys(currentStepErrors).length === 0) {
-        // No errors, proceed to next step
-        const nextStep = activeStep + 1;
-        setActiveStep(nextStep);
-        // Scroll to top of form
-        window.scrollTo(0, 0);
-      } else {
-        // Show errors for current step only
-        formik.setErrors(currentStepErrors);
-      }
-    } catch (error) {
-      console.error('Error in handleNext:', error);
-      setError('An error occurred while processing your request. Please try again.');
-    }
-  };
   
-  const getCurrentStepSchema = (values: FormValues): Yup.AnySchema | null => {
-    switch (activeStep) {
-      case 0:
-        return null; // User type selection
-      case 1:
-        return personalInfoSchema;
-      case 2:
-        return passwordSchema;
-      case 3:
-        return values.userType === 'STORE_OWNER' ? storeInfoSchema : securitySchema;
-      case 4:
-        return securitySchema;
-      default:
-        return null;
+  // Memoize form handlers to prevent unnecessary re-renders
+  const handleNext = useCallback(async () => {
+    try {
+      await formik.validateForm();
+      setFormData(prev => ({ ...prev, ...formik.values }));
+      setActiveStep(prevStep => Math.min(formSteps.length - 1, prevStep + 1));
+      setError(null);
+    } catch (errors) {
+      // Form validation will show errors automatically
     }
-  };
+  }, [formik, formSteps.length]);
+  
+  const handleBack = useCallback(() => {
+    setActiveStep(prevStep => Math.max(0, prevStep - 1));
+    setError(null);
+  }, []);
 
-  const getActiveSteps = () => {
-    const baseSteps = [
-      {
-        id: 'user-type',
-        label: 'User Type',
-      },
-      {
-        id: 'personal-info',
-        label: 'Personal Info',
-      },
-      {
-        id: 'password',
-        label: 'Password',
-      },
-    ];
-
-    if (userType === 'STORE_OWNER') {
-      baseSteps.push({
-        id: 'store-info',
-        label: 'Store Info',
-      });
+  const handleSubmit = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      await formik.validateForm();
+      const { securityQuestion1, securityAnswer1, securityQuestion2, securityAnswer2, ...rest } = formik.values;
+      const registerData: RegisterData = {
+        ...rest,
+        securityQuestions: [
+          { question: securityQuestion1, answer: securityAnswer1 },
+          { question: securityQuestion2, answer: securityAnswer2 }
+        ]
+      };
+      await register(registerData);
+      navigate('/login');
+    } catch (err: any) {
+      setError(err?.response?.data?.message || 'Registration failed. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
+  }, [formik, register, navigate]);
 
-    baseSteps.push({
-      id: 'security',
-      label: 'Security',
-    });
+  const securityQuestions = [
+    'What was your first pet\'s name?',
+    'What city were you born in?',
+    'What is your mother\'s maiden name?',
+    'What was the name of your first school?',
+    'What is your favorite book?'
+  ];
 
-    return baseSteps;
-  };
-
-  const activeSteps = getActiveSteps();
-
-  const renderUserTypeStep = () => (
+  const renderUserTypeStep = (formik: any) => (
     <Box sx={{ maxWidth: 600, mx: 'auto', mt: 4, p: 2 }}>
       <Typography variant="h5" component="h1" sx={{ mb: 3, textAlign: 'center' }}>
         Choose Account Type
       </Typography>
       <UserTypeSelector 
-        onSelect={handleUserTypeSelect} 
-        selectedType={userType}
+        onSelect={(selectedType: UserType) => {
+          setFormData({ userType: selectedType });
+          setActiveStep(1);
+        }} 
       />
     </Box>
   );
 
-  const renderPersonalInfoStep = () => (
+  const renderPersonalInfoStep = (formik: any) => (
     <Box sx={{ maxWidth: 500, mx: 'auto', mt: 4, p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton onClick={handleBack} sx={{ mr: 1 }}>
+        <IconButton onClick={() => handleBack({})} sx={{ mr: 1 }}>
           <ArrowBackIcon />
         </IconButton>
         <Typography variant="h5" component="h1">
@@ -352,10 +347,10 @@ const RegisterPage: React.FC = () => {
         name="name"
         autoComplete="name"
         autoFocus
-        value={formik.values.name}
-        onChange={formik.handleChange}
-        error={formik.touched.name && Boolean(formik.errors.name)}
-        helperText={formik.touched.name && formik.errors.name}
+        value={formData.name || ''}
+        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+        error={formData.name === undefined}
+        helperText={formData.name === undefined ? 'Name is required' : ''}
       />
       <TextField
         margin="normal"
@@ -365,10 +360,10 @@ const RegisterPage: React.FC = () => {
         label="Email Address"
         name="email"
         autoComplete="email"
-        value={formik.values.email}
-        onChange={formik.handleChange}
-        error={formik.touched.email && Boolean(formik.errors.email)}
-        helperText={formik.touched.email && formik.errors.email}
+        value={formData.email || ''}
+        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+        error={formData.email === undefined}
+        helperText={formData.email === undefined ? 'Email is required' : ''}
       />
       <TextField
         margin="normal"
@@ -378,18 +373,26 @@ const RegisterPage: React.FC = () => {
         label="Phone Number"
         name="phone"
         autoComplete="tel"
-        value={formik.values.phone}
-        onChange={formik.handleChange}
-        error={formik.touched.phone && Boolean(formik.errors.phone)}
-        helperText={formik.touched.phone && formik.errors.phone}
+        value={formData.phone || ''}
+        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+        error={formData.phone === undefined}
+        helperText={formData.phone === undefined ? 'Phone number is required' : ''}
       />
+      <Button
+        type="button"
+        variant="contained"
+        color="primary"
+        onClick={() => handleNext(formData)}
+      >
+        Continue
+      </Button>
     </Box>
   );
 
-  const renderPasswordStep = () => (
+  const renderPasswordStep = (formik: any) => (
     <Box sx={{ maxWidth: 500, mx: 'auto', mt: 4, p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton onClick={handleBack} sx={{ mr: 1 }}>
+        <IconButton onClick={() => handleBack({})} sx={{ mr: 1 }}>
           <ArrowBackIcon />
         </IconButton>
         <Typography variant="h5" component="h1">
@@ -406,14 +409,10 @@ const RegisterPage: React.FC = () => {
         type="password"
         id="password"
         autoComplete="new-password"
-        value={formik.values.password}
-        onChange={formik.handleChange}
-        error={formik.touched.password && Boolean(formik.errors.password)}
-        helperText={
-          formik.touched.password && formik.errors.password
-            ? formik.errors.password
-            : 'At least 8 characters with 1 uppercase and 1 special character'
-        }
+        value={formData.password || ''}
+        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+        error={formData.password === undefined}
+        helperText={formData.password === undefined ? 'Password is required' : ''}
       />
       <TextField
         margin="normal"
@@ -423,23 +422,26 @@ const RegisterPage: React.FC = () => {
         label="Confirm Password"
         type="password"
         id="confirmPassword"
-        value={formik.values.confirmPassword}
-        onChange={formik.handleChange}
-        error={
-          formik.touched.confirmPassword && 
-          Boolean(formik.errors.confirmPassword)
-        }
-        helperText={
-          formik.touched.confirmPassword && formik.errors.confirmPassword
-        }
+        value={formData.confirmPassword || ''}
+        onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+        error={formData.confirmPassword === undefined}
+        helperText={formData.confirmPassword === undefined ? 'Confirm Password is required' : ''}
       />
+      <Button
+        type="button"
+        variant="contained"
+        color="primary"
+        onClick={() => handleNext(formData)}
+      >
+        Continue
+      </Button>
     </Box>
   );
 
-  const renderStoreInfoStep = () => (
+  const renderStoreInfoStep = (formik: any) => (
     <Box sx={{ maxWidth: 500, mx: 'auto', mt: 4, p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton onClick={handleBack} sx={{ mr: 1 }}>
+        <IconButton onClick={() => handleBack({})} sx={{ mr: 1 }}>
           <ArrowBackIcon />
         </IconButton>
         <Typography variant="h5" component="h1">
@@ -454,10 +456,10 @@ const RegisterPage: React.FC = () => {
         id="storeName"
         label="Store Name"
         name="storeName"
-        value={formik.values.storeName}
-        onChange={formik.handleChange}
-        error={formik.touched.storeName && Boolean(formik.errors.storeName)}
-        helperText={formik.touched.storeName && formik.errors.storeName}
+        value={formData.storeName || ''}
+        onChange={(e) => setFormData({ ...formData, storeName: e.target.value })}
+        error={formData.storeName === undefined}
+        helperText={formData.storeName === undefined ? 'Store name is required' : ''}
       />
       <TextField
         margin="normal"
@@ -468,18 +470,26 @@ const RegisterPage: React.FC = () => {
         name="address"
         multiline
         rows={3}
-        value={formik.values.address}
-        onChange={formik.handleChange}
-        error={formik.touched.address && Boolean(formik.errors.address)}
-        helperText={formik.touched.address && formik.errors.address}
+        value={formData.address || ''}
+        onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+        error={formData.address === undefined}
+        helperText={formData.address === undefined ? 'Address is required' : ''}
       />
+      <Button
+        type="button"
+        variant="contained"
+        color="primary"
+        onClick={() => handleNext(formData)}
+      >
+        Continue
+      </Button>
     </Box>
   );
 
-  const renderSecurityStep = () => (
+  const renderSecurityStep = (formik: any) => (
     <Box sx={{ maxWidth: 600, mx: 'auto', mt: 4, p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton onClick={handleBack} sx={{ mr: 1 }}>
+        <IconButton onClick={() => handleBack({})} sx={{ mr: 1 }}>
           <ArrowBackIcon />
         </IconButton>
         <Typography variant="h5" component="h1">
@@ -498,9 +508,8 @@ const RegisterPage: React.FC = () => {
         <InputLabel>Security Question 1</InputLabel>
         <Select
           name="securityQuestion1"
-          value={formik.values.securityQuestion1}
-          onChange={formik.handleChange}
-          error={formik.touched.securityQuestion1 && Boolean(formik.errors.securityQuestion1)}
+          value={formData.securityQuestion1 || ''}
+          onChange={(e) => setFormData({ ...formData, securityQuestion1: e.target.value })}
           label="Security Question 1"
         >
           {securityQuestions.map((question, index) => (
@@ -509,8 +518,8 @@ const RegisterPage: React.FC = () => {
             </MenuItem>
           ))}
         </Select>
-        {formik.touched.securityQuestion1 && formik.errors.securityQuestion1 && (
-          <FormHelperText error>{formik.errors.securityQuestion1}</FormHelperText>
+        {formData.securityQuestion1 === undefined && (
+          <FormHelperText error>Security question 1 is required</FormHelperText>
         )}
       </FormControl>
 
@@ -518,10 +527,10 @@ const RegisterPage: React.FC = () => {
         fullWidth
         name="securityAnswer1"
         label="Your Answer"
-        value={formik.values.securityAnswer1}
-        onChange={formik.handleChange}
-        error={formik.touched.securityAnswer1 && Boolean(formik.errors.securityAnswer1)}
-        helperText={formik.touched.securityAnswer1 && formik.errors.securityAnswer1}
+        value={formData.securityAnswer1 || ''}
+        onChange={(e) => setFormData({ ...formData, securityAnswer1: e.target.value })}
+        error={formData.securityAnswer1 === undefined}
+        helperText={formData.securityAnswer1 === undefined ? 'Answer is required' : ''}
         sx={{ mb: 3 }}
       />
 
@@ -529,21 +538,20 @@ const RegisterPage: React.FC = () => {
         <InputLabel>Security Question 2</InputLabel>
         <Select
           name="securityQuestion2"
-          value={formik.values.securityQuestion2}
-          onChange={formik.handleChange}
-          error={formik.touched.securityQuestion2 && Boolean(formik.errors.securityQuestion2)}
+          value={formData.securityQuestion2 || ''}
+          onChange={(e) => setFormData({ ...formData, securityQuestion2: e.target.value })}
           label="Security Question 2"
         >
           {securityQuestions
-            .filter(q => q !== formik.values.securityQuestion1)
+            .filter(q => q !== formData.securityQuestion1)
             .map((question, index) => (
               <MenuItem key={`q2-${index}`} value={question}>
                 {question}
               </MenuItem>
             ))}
         </Select>
-        {formik.touched.securityQuestion2 && formik.errors.securityQuestion2 && (
-          <FormHelperText error>{formik.errors.securityQuestion2}</FormHelperText>
+        {formData.securityQuestion2 === undefined && (
+          <FormHelperText error>Security question 2 is required</FormHelperText>
         )}
       </FormControl>
 
@@ -551,10 +559,10 @@ const RegisterPage: React.FC = () => {
         fullWidth
         name="securityAnswer2"
         label="Your Answer"
-        value={formik.values.securityAnswer2}
-        onChange={formik.handleChange}
-        error={formik.touched.securityAnswer2 && Boolean(formik.errors.securityAnswer2)}
-        helperText={formik.touched.securityAnswer2 && formik.errors.securityAnswer2}
+        value={formData.securityAnswer2 || ''}
+        onChange={(e) => setFormData({ ...formData, securityAnswer2: e.target.value })}
+        error={formData.securityAnswer2 === undefined}
+        helperText={formData.securityAnswer2 === undefined ? 'Answer is required' : ''}
         sx={{ mb: 4 }}
       />
 
@@ -563,8 +571,8 @@ const RegisterPage: React.FC = () => {
           control={
             <Checkbox 
               name="enable2FA" 
-              checked={formik.values.enable2FA}
-              onChange={formik.handleChange}
+              checked={formData.enable2FA || false}
+              onChange={(e) => setFormData({ ...formData, enable2FA: e.target.checked })}
             />
           }
           label="Enable Two-Factor Authentication (2FA)"
@@ -573,20 +581,16 @@ const RegisterPage: React.FC = () => {
           Add an extra layer of security to your account by requiring a verification code in addition to your password.
         </Typography>
         
-        {formik.values.enable2FA && (
+        {formData.enable2FA && (
           <TextField
             fullWidth
             name="phoneFor2FA"
             label="Phone Number for 2FA"
             placeholder="Enter your phone number"
-            value={formik.values.phoneFor2FA}
-            onChange={formik.handleChange}
-            error={formik.touched.phoneFor2FA && Boolean(formik.errors.phoneFor2FA)}
-            helperText={
-              formik.touched.phoneFor2FA && formik.errors.phoneFor2FA 
-                ? formik.errors.phoneFor2FA 
-                : 'We\'ll send a verification code to this number'
-            }
+            value={formData.phoneFor2FA || ''}
+            onChange={(e) => setFormData({ ...formData, phoneFor2FA: e.target.value })}
+            error={formData.phoneFor2FA === undefined}
+            helperText={formData.phoneFor2FA === undefined ? 'Phone number is required for 2FA' : ''}
             sx={{ maxWidth: 400 }}
           />
         )}
@@ -596,8 +600,8 @@ const RegisterPage: React.FC = () => {
         control={
           <Checkbox 
             name="acceptTerms" 
-            checked={formik.values.acceptTerms}
-            onChange={formik.handleChange}
+            checked={formData.acceptTerms || false}
+            onChange={(e) => setFormData({ ...formData, acceptTerms: e.target.checked })}
             required
           />
         }
@@ -609,80 +613,130 @@ const RegisterPage: React.FC = () => {
         }
         sx={{ mb: 3 }}
       />
-      {formik.touched.acceptTerms && formik.errors.acceptTerms && (
-        <FormHelperText error sx={{ mt: -2, mb: 2 }}>
-          {formik.errors.acceptTerms}
-        </FormHelperText>
+      {formData.acceptTerms === undefined && (
+        <FormHelperText error>You must accept the terms and conditions</FormHelperText>
       )}
+      <Button
+        type="submit"
+        variant="contained"
+        color="primary"
+        disabled={!formik.isValid || !formik.values.acceptTerms}
+        onClick={() => handleSubmit()}
+      >
+        {isLoading ? 'Registering...' : 'Complete Registration'}
+      </Button>
     </Box>
   );
 
-  const renderStepContent = (step: number) => {
-    switch (step) {
+  const renderTermsStep = (formik: any) => (
+    <Box sx={{ maxWidth: 600, mx: 'auto', mt: 4, p: 2 }}>
+      <Typography variant="h5" component="h1" sx={{ mb: 3, textAlign: 'center' }}>
+        Terms and Conditions
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+        Please read and agree to our terms and conditions.
+      </Typography>
+      <FormControlLabel
+        control={
+          <Checkbox 
+            name="acceptTerms" 
+            checked={formData.acceptTerms || false}
+            onChange={(e) => setFormData({ ...formData, acceptTerms: e.target.checked })}
+            required
+          />
+        }
+        label={
+          <Typography variant="body2">
+            I agree to the <Link href="/terms" target="_blank" rel="noopener">Terms of Service</Link> and{' '}
+            <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>
+          </Typography>
+        }
+        sx={{ mb: 3 }}
+      />
+      {formData.acceptTerms === undefined && (
+        <FormHelperText error>You must accept the terms and conditions</FormHelperText>
+      )}
+      <Button
+        type="submit"
+        variant="contained"
+        color="primary"
+        disabled={!formik.isValid || !formik.values.acceptTerms}
+        onClick={() => handleSubmit()}
+      >
+        {isLoading ? 'Registering...' : 'Complete Registration'}
+      </Button>
+    </Box>
+  );
+
+  // Memoize the current step component to prevent unnecessary re-renders
+  const CurrentStepComponent = useMemo(() => {
+    if (!formSteps[activeStep]) return null;
+    
+    switch (activeStep) {
       case 0:
-        return renderUserTypeStep();
+        return renderUserTypeStep(formik);
       case 1:
-        return renderPersonalInfoStep();
+        return renderPersonalInfoStep(formik);
       case 2:
-        return renderPasswordStep();
+        return renderPasswordStep(formik);
       case 3:
-        return userType === 'STORE_OWNER' ? renderStoreInfoStep() : renderSecurityStep();
+        return formData.userType === 'STORE_OWNER' ? renderStoreInfoStep(formik) : renderSecurityStep(formik);
       case 4:
-        return renderSecurityStep();
+        return formData.userType === 'STORE_OWNER' ? renderSecurityStep(formik) : renderTermsStep(formik);
+      case 5:
+        return renderTermsStep(formik);
       default:
         return null;
     }
-  };
-
-  const totalSteps = userType === 'STORE_OWNER' ? 5 : 4;
-  const isLastStep = activeStep === totalSteps - 1;
+  }, [activeStep, formData, formik, formSteps]);
 
   return (
     <Container component="main" maxWidth="md">
-      <Box
-        sx={{
-          marginTop: 8,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-        }}
-      >
+      <Paper elevation={3} sx={{ p: 4, mt: 4 }}>
+        <Box sx={{ mb: 4 }}>
+          <Typography component="h1" variant="h4" align="center">
+            Create an Account
+          </Typography>
+          <Stepper activeStep={activeStep} alternativeLabel sx={{ mt: 4 }}>
+            {formSteps.map((step, index) => (
+              <Step key={step.label} completed={index < activeStep}>
+                <StepLabel>{step.label}</StepLabel>
+              </Step>
+            ))}
+          </Stepper>
+        </Box>
+        
         {error && (
-          <Alert severity="error" sx={{ mb: 2, width: '100%' }}>
+          <Alert severity="error" sx={{ mb: 3 }}>
             {error}
           </Alert>
         )}
-        
-        <Stepper activeStep={activeStep} alternativeLabel sx={{ mb: 4, width: '100%' }}>
-          {activeSteps.map((step) => (
-            <Step key={step.id}>
-              <StepLabel>{step.label}</StepLabel>
-            </Step>
-          ))}
-        </Stepper>
 
-        <Paper sx={{ width: '100%', p: 3 }}>
-          <form onSubmit={formik.handleSubmit} noValidate>
-            {renderStepContent(activeStep)}
-            
-            {activeStep > 0 && (
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 4 }}>
-                <Button onClick={handleBack}>
-                  Back
-                </Button>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  color="primary"
-                  disabled={formik.isSubmitting}
-                >
-                  {isLastStep ? 'Complete Registration' : 'Continue'}
-                </Button>
-              </Box>
-            )}
-          </form>
-        </Paper>
-      </Box>
+        <form onSubmit={formik.handleSubmit}>
+          <Box sx={{ mt: 2 }}>
+            {CurrentStepComponent}
+          </Box>
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 4 }}>
+            <Button
+              type="button"
+              onClick={handleBack}
+              disabled={activeStep === 0}
+              startIcon={<ArrowBackIcon />}
+            >
+              Back
+            </Button>
+            <Button
+              type="submit"
+              variant="contained"
+              color="primary"
+              disabled={formik.isSubmitting}
+            >
+              {activeStep === formSteps.length - 1 ? 'Finish' : 'Next'}
+            </Button>
+          </Box>
+        </form>
+      </Paper>
     </Container>
   );
 };

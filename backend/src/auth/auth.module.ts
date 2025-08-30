@@ -18,8 +18,11 @@ import { Store } from '../stores/entities/store.entity';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET', 'your-secret-key'),
-        signOptions: { expiresIn: '24h' },
+        secret: configService.get('JWT_SECRET') || require('crypto').randomBytes(64).toString('hex'),
+        signOptions: { 
+          expiresIn: configService.get('JWT_EXPIRES_IN', '24h'),
+          algorithm: 'HS512'
+        },
       }),
       inject: [ConfigService],
     }),

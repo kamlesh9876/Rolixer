@@ -14,6 +14,11 @@ import {
   Switch,
   TextField,
   Typography,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserType } from '../../types';
@@ -74,6 +79,7 @@ const RegisterPage: React.FC = () => {
   const { register } = useAuth();
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState(0);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   // Combined validation schema
   const validationSchema = useMemo(() => Yup.object().shape({
@@ -306,16 +312,8 @@ const RegisterPage: React.FC = () => {
             enable2FA: values.enable2FA,
             ...(values.enable2FA && { phoneFor2FA: values.phoneFor2FA }),
           };
-          
-          const { user } = await register(registerData);
-          // Navigate based on user role after successful registration
-          if (user.role === 'STORE_OWNER') {
-            navigate('/store/dashboard');
-          } else if (user.role === 'ADMIN') {
-            navigate('/admin/dashboard');
-          } else {
-            navigate('/dashboard');
-          }
+          await register(registerData);
+          setShowSuccess(true);
         } else {
           setActiveStep(prev => prev + 1);
         }
@@ -326,6 +324,24 @@ const RegisterPage: React.FC = () => {
       }
     },
   });
+
+  const handleSubmit = async (values: FormValues) => {
+    if (activeStep === formSteps.length - 1) {
+      try {
+        await register(values);
+        setShowSuccess(true);
+      } catch (error) {
+        console.error('Registration failed:', error);
+      }
+    } else {
+      setActiveStep((prev) => prev + 1);
+    }
+  };
+
+  const handleCloseSuccess = () => {
+    setShowSuccess(false);
+    navigate('/login');
+  };
 
   // Handle going back to previous step
   const handleBack = useCallback(() => {
@@ -653,6 +669,25 @@ const RegisterPage: React.FC = () => {
           </Button>
         </Typography>
       </Box>
+
+      {/* Success Dialog */}
+      <Dialog
+        open={showSuccess}
+        onClose={handleCloseSuccess}
+        aria-labelledby="registration-success-dialog"
+      >
+        <DialogTitle>Registration Successful!</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Your account has been created successfully. You will be redirected to the login page.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseSuccess} color="primary" autoFocus>
+            OK
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Box from '@mui/material/Box';
@@ -7,13 +7,11 @@ import CircularProgress from '@mui/material/CircularProgress';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { QueryClientProvider as AppQueryClientProvider } from './providers/QueryClientProvider';
 
 // Lazy load pages for better code splitting
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
 const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
-const ProtectedRoute = lazy(() => import('./components/ProtectedRoute'));
 
 // Loading component for Suspense fallback
 const LoadingFallback = () => (
@@ -64,66 +62,60 @@ const theme = createTheme({
   },
 });
 
-// Main App component with Suspense
-const AppContent = () => {
+// Protected Route component
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, loading } = useAuth();
 
   if (loading) {
     return <LoadingFallback />;
   }
 
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+// Main App component with routing
+const AppContent = () => {
   return (
-    <Suspense fallback={<LoadingFallback />}>
-      <Routes>
-        <Route
-          path="/login"
-          element={!isAuthenticated ? <LoginPage /> : <Navigate to="/dashboard" />}
-        />
-        <Route
-          path="/register"
-          element={!isAuthenticated ? <RegisterPage /> : <Navigate to="/dashboard" />}
-        />
-        <Route
-          path="/dashboard/*"
-          element={
-            <Suspense fallback={<LoadingFallback />}>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Suspense fallback={<LoadingFallback />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/dashboard"
+            element={
               <ProtectedRoute>
                 <DashboardPage />
               </ProtectedRoute>
-            </Suspense>
-          }
-        />
-        <Route
-          path="/"
-          element={
-            isAuthenticated ? (
-              <Navigate to="/dashboard" />
-            ) : (
-              <Navigate to="/login" />
-            )
-          }
-        />
-        <Route path="*" element={<Navigate to="/" />} />
-      </Routes>
-    </Suspense>
+            }
+          />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+      {process.env.NODE_ENV === 'development' && (
+        <ReactQueryDevtools initialIsOpen={false} position="bottom-right" />
+      )}
+    </ThemeProvider>
   );
 };
 
 // App wrapper with providers
-const App = () => (
-  <AppQueryClientProvider>
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <AuthProvider>
-        <Router>
+const App = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Router>
+        <AuthProvider>
           <AppContent />
-        </Router>
-      </AuthProvider>
-    </ThemeProvider>
-    {process.env.NODE_ENV === 'development' && (
-      <ReactQueryDevtools initialIsOpen={false} position="bottom-right" />
-    )}
-  </AppQueryClientProvider>
-);
+        </AuthProvider>
+      </Router>
+    </QueryClientProvider>
+  );
+};
 
 export default App;

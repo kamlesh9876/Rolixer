@@ -32,10 +32,10 @@ type RegisterData = {
   address?: string;
 };
 
-type AuthContextType = {
+interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
+  login: (email: string, password: string, userType?: UserType) => Promise<{ user: User }>;
+  register: (data: RegisterData) => Promise<{ user: User }>;
   logout: () => void;
   loading: boolean;
   isAuthenticated: boolean;
@@ -46,7 +46,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
+  // Removed useNavigate from here to avoid router context issues
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -77,46 +77,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const { access_token, user: userData } = response.data;
       localStorage.setItem('token', access_token);
       setUser(userData);
-      
-      // Redirect based on user role
-      if (userData.role === 'STORE_OWNER') {
-        navigate('/store/dashboard');
-      } else if (userData.role === 'ADMIN') {
-        navigate('/admin/dashboard');
-      } else {
-        navigate('/dashboard');
-      }
+      return { user: userData };
     } catch (error) {
-      throw new Error('Invalid email or password');
+      console.error('Login failed:', error);
+      throw error;
     }
   };
 
   const register = async (data: RegisterData) => {
     try {
-      const { name, email, password, userType, phone, storeName, address } = data;
-      
-      const response = await apiClient.post('/auth/register', {
-        name,
-        email,
-        phone,
-        password,
-        confirmPassword: password,
-        role: userType,
-        ...(userType === 'STORE_OWNER' && { storeName, address })
-      });
-      
-      // Auto-login after successful registration
-      await login(email, password, userType);
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Registration failed';
-      throw new Error(errorMessage);
+      const response = await apiClient.post('/auth/register', data);
+      const { user: userData, token } = response.data;
+      localStorage.setItem('token', token);
+      setUser(userData);
+      return { user: userData };
+    } catch (error) {
+      console.error('Registration failed:', error);
+      throw error;
     }
   };
 
   const logout = () => {
     localStorage.removeItem('token');
     setUser(null);
-    navigate('/login');
+    // We'll handle navigation in the component
   };
 
   return (

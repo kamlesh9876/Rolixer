@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, Inject, CACHE_MANAGER } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, FindManyOptions, Like, In } from 'typeorm';
 import { Store } from './entities/store.entity';
@@ -6,8 +6,8 @@ import { User } from '../users/entities/user.entity';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { UserRole } from '../users/entities/user.entity';
-import { Cache } from 'cache-manager';
-import { RedisService } from '../redis/redis.service';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 
 type StoreQueryOptions = {
   search?: string;
@@ -32,11 +32,19 @@ export class StoresService {
     @InjectRepository(User)
     private usersRepository: Repository<User>,
     @Inject(CACHE_MANAGER)
-    private cacheManager: Cache,
+    private readonly cacheManager: Cache,
   ) {}
 
   private getStoreCacheKey(storeId: string): string {
     return `${this.STORE_CACHE_PREFIX}${storeId}`;
+  }
+
+  private async clearStoreListCache(): Promise<void> {
+    const client = (this.cacheManager as any).store.getClient();
+    if (client && typeof client.keys === 'function') {
+      const keys = await client.keys(`${this.STORE_LIST_CACHE_PREFIX}*`);
+      await Promise.all(keys.map((key: string) => this.cacheManager.del(key)));
+    }
   }
 
   private getStoreListCacheKey(query: any): string {
@@ -232,9 +240,7 @@ export class StoresService {
     await Promise.all([
       this.cacheManager.del(this.getStoreCacheKey(id)),
       this.cacheManager.del(this.getRatingCacheKey(id)),
-      // Invalidate any list caches that might include this store
-      this.cacheManager.store.keys(`${this.STORE_LIST_CACHE_PREFIX}*`)
-        .then(keys => Promise.all(keys.map(key => this.cacheManager.del(key)))),
+      this.clearStoreListCache(),
     ]);
     const user = await this.usersRepository.findOne({ where: { id: userId } });
 

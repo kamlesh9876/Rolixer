@@ -53,13 +53,21 @@ const LoginPage: React.FC = () => {
       password: '',
     },
     validationSchema,
-    onSubmit: async (values) => {
+    onSubmit: async (values, { setSubmitting, setStatus }) => {
       try {
-        setError('');
         await login(values.email, values.password);
-        navigate(from, { replace: true });
-      } catch (err) {
-        setError('Failed to log in. Please check your credentials.');
+        // Navigate based on user role after successful login
+        const user = JSON.parse(localStorage.getItem('user') || '{}');
+        if (user.role === 'STORE_OWNER') {
+          navigate('/store/dashboard');
+        } else if (user.role === 'ADMIN') {
+          navigate('/admin/dashboard');
+        } else {
+          navigate('/dashboard');
+        }
+      } catch (error) {
+        setStatus('Invalid email or password');
+        setSubmitting(false);
       }
     },
   });

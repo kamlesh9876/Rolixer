@@ -10,12 +10,14 @@ import { StoresModule } from './stores/stores.module';
 import { RatingsModule } from './ratings/ratings.module';
 import { DatabaseModule } from './database/database.module';
 import { RedisModule } from './redis/redis.module';
+import { validate } from './config/env.validation';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validate,
     }),
     ThrottlerModule.forRoot([
       {

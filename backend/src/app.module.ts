@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -16,6 +17,12 @@ import { RedisModule } from './redis/redis.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 15 * 60 * 1000, // 15 minutes in milliseconds
+        limit: 5, // 5 requests per 15 minutes for auth endpoints
+      },
+    ]),
     RedisModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],

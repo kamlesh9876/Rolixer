@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, getConnection } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { User, UserRole } from '../users/entities/user.entity';
 import { Store, StoreStatus } from '../stores/entities/store.entity';
 import { CreateUserDto, SecurityQuestionDto, UserType } from './dto/create-user.dto';
@@ -28,6 +28,7 @@ export class AuthService {
     @InjectRepository(Store)
     private storesRepository: Repository<Store>,
     private jwtService: JwtService,
+    private dataSource: DataSource,
   ) {}
 
   async validateUser(email: string, password: string): Promise<User | null> {
@@ -116,7 +117,7 @@ export class AuthService {
                     userType === UserType.ADMIN ? UserRole.ADMIN : UserRole.CUSTOMER;
 
     // Start a transaction
-    const queryRunner = getConnection().createQueryRunner();
+    const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 

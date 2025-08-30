@@ -14,10 +14,16 @@ type JwtPayload = {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(private configService: ConfigService) {
+    const jwtSecret = configService.get('JWT_SECRET');
+    
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET environment variable is required but not set');
+    }
+
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get('JWT_SECRET', 'your-secret-key'),
+      secretOrKey: jwtSecret,
     });
   }
 

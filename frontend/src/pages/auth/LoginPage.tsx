@@ -9,15 +9,12 @@ import {
   Typography,
   TextField,
   Button,
-  Paper,
   Link,
   Alert,
   Stepper,
   Step,
   StepLabel,
   StepContent,
-  Card,
-  CardContent,
   Grid,
   IconButton
 } from '@mui/material';
@@ -30,13 +27,10 @@ const validationSchema = Yup.object({
 });
 
 const LoginPage: React.FC = () => {
-  const [error, setError] = useState('');
   const [activeStep, setActiveStep] = useState(0);
   const [userType, setUserType] = useState<UserType | null>(null);
   const { login } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
-  const from = (location.state as any)?.from?.pathname || '/';
 
   const handleUserTypeSelect = (selectedType: UserType) => {
     setUserType(selectedType);

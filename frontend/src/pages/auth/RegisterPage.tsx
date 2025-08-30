@@ -76,13 +76,12 @@ const securityQuestions = [
 ];
 
 const RegisterPage = () => {
-  const [searchParams] = useSearchParams();
   const { register } = useAuth();
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState(0);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Combined validation schema
+  // Combined validation schema (used in formSteps validation)
   const validationSchema = useMemo(() => Yup.object().shape({
     userType: Yup.string().oneOf(['CUSTOMER', 'STORE_OWNER'] as const).required('Required'),
     name: Yup.string().required('Name is required'),

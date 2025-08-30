@@ -9,11 +9,29 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
-  // Enable CORS
+  // Enable CORS with more restrictive configuration
+  const allowedOrigins = configService.get('FRONTEND_URL', 'http://localhost:3000').split(',');
   app.enableCors({
-    origin: configService.get('FRONTEND_URL', 'http://localhost:3000'),
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    origin: allowedOrigins,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
     credentials: true,
+    optionsSuccessStatus: 200,
+    maxAge: 86400, // 24 hours
+  });
+
+  // Add basic security headers
+  app.use((req, res, next) => {
+    // Security headers
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    
+    // Remove server header
+    res.removeHeader('X-Powered-By');
+    
+    next();
   });
 
   // Global API prefix

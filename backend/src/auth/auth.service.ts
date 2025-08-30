@@ -76,17 +76,24 @@ export class AuthService {
 
   async register(createUserDto: CreateUserDto) {
     const { 
+      name,
       email, 
+      phone,
       password, 
       confirmPassword, 
       userType, 
       storeName, 
       address, 
-      securityQuestions, 
+      securityQuestions = [],
       phoneFor2FA, 
-      enable2FA, 
-      ...userData 
+      enable2FA = false,
+      ...rest
     } = createUserDto;
+    
+    // Validate required fields
+    if (!name || !email || !password) {
+      throw new BadRequestException('Name, email, and password are required');
+    }
     
     // Check if passwords match
     if (password !== confirmPassword) {
@@ -118,32 +125,35 @@ export class AuthService {
       const salt = await bcrypt.genSalt();
       const hashedPassword = await bcrypt.hash(password, salt);
 
-      // Create user
+      // Create user with all required fields
       const user = new User();
-      Object.assign(user, {
-        ...userData,
-        email,
-        password: hashedPassword,
-        role: userRole,
-        phone: createUserDto.phone || null,
-        securityQuestions: securityQuestions || [],
-        enable2FA: enable2FA || false,
-        phoneFor2FA: enable2FA ? phoneFor2FA : null,
-      });
+      user.name = name;
+      user.email = email;
+      user.phone = phone || undefined; // Use undefined instead of null for optional fields
+      user.password = hashedPassword;
+      user.role = userRole;
+      user.address = address || undefined;
+      user.securityQuestions = securityQuestions || [];
+      user.enable2FA = Boolean(enable2FA);
+      user.phoneFor2FA = enable2FA ? phoneFor2FA : undefined;
 
+      // Save the user
       const savedUser = await queryRunner.manager.save(User, user);
+      let storeId: string | undefined;
 
       // If user is a store owner, create a store
       if (userType === UserType.STORE_OWNER && storeName) {
         const store = new Store();
-        Object.assign(store, {
-          name: storeName,
-          address: address || '',
-          owner: savedUser,
-          email: savedUser.email,
-          status: StoreStatus.ACTIVE,
-        });
-        await queryRunner.manager.save(Store, store);
+        store.name = storeName;
+        store.address = address || '';
+        store.owner = savedUser;
+        store.email = savedUser.email;
+        // Remove phone assignment if Store entity doesn't have it
+        // store.phone = savedUser.phone || '';
+        store.status = StoreStatus.ACTIVE;
+        
+        const savedStore = await queryRunner.manager.save(Store, store);
+        storeId = savedStore.id;
       }
       
       // Commit transaction
@@ -159,10 +169,13 @@ export class AuthService {
       const token = this.jwtService.sign(payload);
       
       // Return user data without password and with token
-      const { password: _, ...result } = savedUser;
+      const { password: _, ...userData } = savedUser;
       return {
-        ...result,
-        access_token: token,
+        user: {
+          ...userData,
+          storeId
+        },
+        access_token: token
       };
     } catch (error) {
       // Rollback transaction on error

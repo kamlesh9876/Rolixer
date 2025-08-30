@@ -23,14 +23,6 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { UserType } from '../../types';
 
-// Security questions for the form
-const securityQuestions = [
-  'What was your first pet\'s name?',
-  'What city were you born in?',
-  'What is your mother\'s maiden name?',
-  'What was your first car?',
-  'What is your favorite book?',
-];
 
 // Form values type
 type FormValues = {
@@ -58,7 +50,7 @@ interface FormStep {
   fields: string[];
   skip?: (values: FormValues) => boolean;
   validate?: (values: FormValues) => boolean;
-};
+}
 
 // Register data type for API
 interface RegisterData {
@@ -74,7 +66,16 @@ interface RegisterData {
   phoneFor2FA?: string;
 }
 
-const RegisterPage: React.FC = () => {
+// Move security questions outside the component
+const securityQuestions = [
+  'What was your first pet\'s name?',
+  'What city were you born in?',
+  'What is your mother\'s maiden name?',
+  'What was your first car?',
+  'What is the name of your first school?'
+];
+
+const RegisterPage = () => {
   const [searchParams] = useSearchParams();
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -692,4 +693,5 @@ const RegisterPage: React.FC = () => {
   );
 };
 
+// Export the component as default
 export default RegisterPage;

@@ -19,7 +19,6 @@ import {
   FormHelperText,
   FormControlLabel,
   Checkbox,
-  InputAdornment,
   Select,
   MenuItem,
   FormControl,
@@ -32,12 +31,7 @@ import {
 } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserType } from '../../types';
-import {
-  PersonOutlineOutlined,
-  EmailOutlined,
-  PhoneOutlined,
-  LockOutlined,
-} from '@mui/icons-material';
+
 
 // Security questions for the form
 const securityQuestions = [
@@ -623,8 +617,8 @@ const RegisterPage: React.FC = () => {
               {formik.touched.acceptTerms && formik.errors.acceptTerms}
             </FormHelperText>
           </FormControl>
-        );
-
+        </>
+      )
     };
 
     // Get the current step content based on the step index

@@ -189,7 +189,7 @@ const RegisterPage = () => {
   // Formik configuration
   const formik = useFormik<FormValues>({
     initialValues: {
-      userType: (searchParams.get('type') as UserType) || 'CUSTOMER',
+      userType: ((searchParams.get('type')?.toUpperCase() as UserType) || 'CUSTOMER') as UserType,
       name: '',
       email: '',
       phone: '',
@@ -278,7 +278,7 @@ const RegisterPage = () => {
         acc[field as string] = true;
         return acc;
       }, {} as Record<string, boolean>);
-      formik.setTouched(touched);
+      formik.setTouched(touched, false);
 
       // Create a validation schema for the current step's fields
       const stepFields = currentStep.fields.reduce<Record<string, any>>((schema, field) => {
@@ -305,15 +305,14 @@ const RegisterPage = () => {
           await formik.submitForm();
         } catch (error) {
           console.error('Form submission error:', error);
-          throw error; // Re-throw to be caught by the outer catch
+          throw error;
         }
       } else {
         console.log('Moving to next step');
-        setActiveStep(prev => {
-          const nextStep = prev + 1;
-          console.log('Setting next step to:', nextStep);
-          return nextStep < visibleSteps.length ? nextStep : prev;
-        });
+        // Force update the active step
+        const nextStep = activeStep + 1;
+        console.log('Setting next step to:', nextStep);
+        setActiveStep(nextStep);
         
         // Scroll to top of form
         window.scrollTo({ top: 0, behavior: 'smooth' });

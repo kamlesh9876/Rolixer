@@ -46,12 +46,14 @@ async function bootstrap() {
     });
     const configService = app.get(ConfigService);
 
-  // Enable CORS
+  // Enable CORS for development
   app.enableCors({
-    origin: '*', // For development only - restrict in production
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    allowedHeaders: 'Content-Type, Accept, Authorization',
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type, Accept, Authorization, X-Requested-With',
     credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
   });
 
   // Global API prefix

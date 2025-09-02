@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useFormik, FormikHelpers } from 'formik';
+import { useFormik } from 'formik';
 import * as Yup from 'yup';
-import type { FormikErrors, FormikTouched, FormikValues } from 'formik';
+import type { FormikErrors, FormikValues } from 'formik';
 import {
   Box,
   Typography,
@@ -13,9 +13,6 @@ import {
   Stepper,
   Step,
   StepLabel,
-  StepContent,
-  IconButton,
-  Grid,
   Paper,
   Fade,
   CircularProgress,
@@ -23,8 +20,6 @@ import {
   FormControlLabel,
   Checkbox,
   InputAdornment,
-  IconButton as MuiIconButton,
-  Tooltip,
   Select,
   MenuItem,
   FormControl,
@@ -42,11 +37,6 @@ import {
   EmailOutlined,
   PhoneOutlined,
   LockOutlined,
-  Visibility,
-  VisibilityOff,
-  StoreOutlined,
-  LocationOnOutlined,
-  HelpOutlineOutlined
 } from '@mui/icons-material';
 
 // Security questions for the form
@@ -241,34 +231,27 @@ const RegisterPage = () => {
   });
 
   // Filter out skipped steps and ensure we have at least one step
-  const { visibleSteps, currentStep, safeActiveStep, isLastStep } = useMemo(() => {
-    console.log('Calculating steps with activeStep:', activeStep);
+  const { visibleSteps, currentStep, isLastStep } = useMemo(() => {
     const visible = formSteps.filter(step => !step.skip || !step.skip(formik.values));
     const safeStep = Math.min(activeStep, Math.max(0, visible.length - 1));
-    
-    console.log('Visible steps:', visible);
-    console.log('Current step:', visible[safeStep]);
-    console.log('Is last step:', safeStep === visible.length - 1);
     
     return {
       visibleSteps: visible,
       currentStep: visible[safeStep],
-      safeActiveStep: safeStep,
       isLastStep: safeStep === visible.length - 1
     };
   }, [formSteps, formik.values, activeStep]);
 
-  // Update activeStep if it was out of bounds
+  // Ensure activeStep is within bounds when visible steps change
   useEffect(() => {
-    if (activeStep !== safeActiveStep) {
-      setActiveStep(safeActiveStep);
+    const maxStep = Math.max(0, visibleSteps.length - 1);
+    if (activeStep > maxStep) {
+      setActiveStep(maxStep);
     }
-  }, [activeStep, safeActiveStep]);
+  }, [visibleSteps.length, activeStep]);
 
   const handleNext = useCallback(async () => {
-    console.log('handleNext called, currentStep:', currentStep);
     if (!currentStep) {
-      console.log('No current step, returning');
       return;
     }
 
@@ -289,18 +272,14 @@ const RegisterPage = () => {
         return schema;
       }, {});
 
-      console.log('Step fields to validate:', stepFields);
       const stepValidationSchema = Yup.object().shape(stepFields);
       
       // Validate only the current step's fields
-      console.log('Validating values:', formik.values);
       await stepValidationSchema.validate(formik.values, { abortEarly: false });
       
-      console.log('Validation passed');
       setError(null);
       
       if (isLastStep) {
-        console.log('Last step, submitting form');
         try {
           await formik.submitForm();
         } catch (error) {
@@ -308,10 +287,8 @@ const RegisterPage = () => {
           throw error;
         }
       } else {
-        console.log('Moving to next step');
-        // Force update the active step
+        // Move to next step
         const nextStep = activeStep + 1;
-        console.log('Setting next step to:', nextStep);
         setActiveStep(nextStep);
         
         // Scroll to top of form
@@ -334,7 +311,7 @@ const RegisterPage = () => {
         setError('An unknown error occurred');
       }
     }
-  }, [currentStep, formik, isLastStep, validationSchema, visibleSteps.length]);
+  }, [currentStep, formik, isLastStep, validationSchema, activeStep]);
 
   const handleBack = useCallback(() => {
     setActiveStep(prev => Math.max(0, prev - 1));
@@ -452,6 +429,43 @@ const RegisterPage = () => {
                 startAdornment: (
                   <InputAdornment position="start">
                     <EmailOutlined color="action" />
+                  </InputAdornment>
+                )
+              }}
+            />
+            <TextField
+              fullWidth
+              margin="normal"
+              id="phone"
+              name="phone"
+              label="Phone Number"
+              type="tel"
+              value={formik.values.phone}
+              onChange={formik.handleChange}
+              onBlur={formik.handleBlur}
+              error={formik.touched.phone && Boolean(formik.errors.phone)}
+              helperText={formik.touched.phone && formik.errors.phone}
+              variant="outlined"
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '8px',
+                  '&.Mui-focused fieldset': {
+                    borderColor: 'primary.main',
+                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
+                  },
+                  '&:hover fieldset': {
+                    borderColor: 'action.hover'
+                  }
+                },
+                '& .MuiInputLabel-root.Mui-focused': {
+                  color: 'primary.main',
+                  fontWeight: 500
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <PhoneOutlined color="action" />
                   </InputAdornment>
                 )
               }}

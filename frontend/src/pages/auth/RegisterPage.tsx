@@ -92,7 +92,7 @@ type RegisterData = {
   | { userType: 'CUSTOMER' | 'ADMIN' }
 )
 
-const RegisterPage = () => {
+const RegisterPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -116,7 +116,6 @@ const RegisterPage = () => {
       {
         label: 'Store Info',
         fields: ['storeName', 'address'],
-        skip: (values) => values.userType !== 'STORE_OWNER',
       },
       {
         label: 'Security',
@@ -230,25 +229,67 @@ const RegisterPage = () => {
     },
   });
 
-  // Filter out skipped steps and ensure we have at least one step
-  const { visibleSteps, currentStep, isLastStep } = useMemo(() => {
-    const visible = formSteps.filter(step => !step.skip || !step.skip(formik.values));
-    const safeStep = Math.min(activeStep, Math.max(0, visible.length - 1));
+  // Track all steps and their visibility
+  const { visibleSteps, stepMap } = useMemo(() => {
+    const visible: Array<FormStep<FormValues>> = [];
+    const stepMap: Record<number, number> = {}; // Maps original step index to visible step index
+    
+    formSteps.forEach((step, index) => {
+      // Always show security questions step
+      const isVisible = step.label === 'Security' || !step.skip || !step.skip(formik.values);
+      if (isVisible) {
+        stepMap[index] = visible.length;
+        visible.push(step);
+      } else {
+        stepMap[index] = -1; // Mark as hidden
+      }
+    });
+    
+    return { visibleSteps: visible, stepMap };
+  }, [formSteps, formik.values]);
+  
+  // Get current step info
+  const { currentStep, isLastStep } = useMemo(() => {
+    const visibleIndex = stepMap[activeStep] ?? 0;
+    const safeIndex = Math.min(visibleIndex, Math.max(0, visibleSteps.length - 1));
     
     return {
-      visibleSteps: visible,
-      currentStep: visible[safeStep],
-      isLastStep: safeStep === visible.length - 1
+      currentStep: visibleSteps[safeIndex],
+      isLastStep: safeIndex === visibleSteps.length - 1
     };
-  }, [formSteps, formik.values, activeStep]);
+  }, [activeStep, stepMap, visibleSteps]);
 
   // Ensure activeStep is within bounds when visible steps change
   useEffect(() => {
-    const maxStep = Math.max(0, visibleSteps.length - 1);
-    if (activeStep > maxStep) {
-      setActiveStep(maxStep);
+    // Find the next visible step if current step is hidden
+    const findNextVisibleStep = (current: number, direction: number): number => {
+      let nextStep = current + direction;
+      
+      // If we've gone past the end, go to the last step
+      if (nextStep >= formSteps.length) {
+        return formSteps.length - 1;
+      }
+      
+      // If we've gone before the start, go to the first step
+      if (nextStep < 0) {
+        return 0;
+      }
+      
+      // If the step is visible, return it
+      if (stepMap[nextStep] !== -1) {
+        return nextStep;
+      }
+      
+      // Otherwise, keep looking in the same direction
+      return findNextVisibleStep(nextStep, direction);
+    };
+    
+    // If current step is hidden, find the next visible one
+    if (stepMap[activeStep] === -1) {
+      const nextStep = findNextVisibleStep(activeStep, 1);
+      setActiveStep(nextStep);
     }
-  }, [visibleSteps.length, activeStep]);
+  }, [activeStep, formSteps.length, stepMap]);
 
   const handleNext = useCallback(async () => {
     if (!currentStep) {
@@ -325,228 +366,93 @@ const RegisterPage = () => {
   const renderStepContent = useCallback((step: number) => {
     if (!currentStep) return <div>Loading...</div>;
     
-    switch (step) {
-      case 0: // Account Type
-        return (
-          <FormControl fullWidth margin="normal">
-            <InputLabel id="user-type-label">Account Type</InputLabel>
-            <Select
-              labelId="user-type-label"
-              id="userType"
-              name="userType"
-              value={formik.values.userType}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.userType && Boolean(formik.errors.userType)}
-              label="Account Type"
-            >
-              <MenuItem value="CUSTOMER">Customer</MenuItem>
-              <MenuItem value="STORE_OWNER">Store Owner</MenuItem>
-            </Select>
-            <FormHelperText error>
-              {formik.touched.userType && formik.errors.userType}
-            </FormHelperText>
-          </FormControl>
-        );
-      
-      case 1: // Personal Info
-        return (
-          <>
-            <TextField
-              fullWidth
-              id="name"
-              name="name"
-              label="Full Name"
-              value={formik.values.name}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.name && Boolean(formik.errors.name)}
-              helperText={formik.touched.name && formik.errors.name}
-              margin="normal"
-              required
-              variant="outlined"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: '8px',
-                  '&.Mui-focused fieldset': {
-                    borderColor: 'primary.main',
-                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
-                  },
-                  '&:hover fieldset': {
-                    borderColor: 'action.hover'
-                  }
-                },
-                '& .MuiInputLabel-root': {
-                  color: 'text.secondary',
-                  '&.Mui-focused': {
-                    color: 'primary.main',
-                    fontWeight: 500
-                  }
-                },
-                '& .MuiFormHelperText-root': {
-                  marginLeft: 0,
-                  marginTop: 1
-                }
-              }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PersonOutlineOutlined color="action" />
-                  </InputAdornment>
-                )
-              }}
-            />
-            <TextField
-              fullWidth
-              margin="normal"
-              id="email"
-              name="email"
-              label="Email"
-              type="email"
-              value={formik.values.email}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.email && Boolean(formik.errors.email)}
-              helperText={formik.touched.email && formik.errors.email}
-              variant="outlined"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: '8px',
-                  '&.Mui-focused fieldset': {
-                    borderColor: 'primary.main',
-                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
-                  },
-                  '&:hover fieldset': {
-                    borderColor: 'action.hover'
-                  }
-                },
-                '& .MuiInputLabel-root.Mui-focused': {
-                  color: 'primary.main',
-                  fontWeight: 500
-                }
-              }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <EmailOutlined color="action" />
-                  </InputAdornment>
-                )
-              }}
-            />
-            <TextField
-              fullWidth
-              margin="normal"
-              id="phone"
-              name="phone"
-              label="Phone Number"
-              type="tel"
-              value={formik.values.phone}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.phone && Boolean(formik.errors.phone)}
-              helperText={formik.touched.phone && formik.errors.phone}
-              variant="outlined"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: '8px',
-                  '&.Mui-focused fieldset': {
-                    borderColor: 'primary.main',
-                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
-                  },
-                  '&:hover fieldset': {
-                    borderColor: 'action.hover'
-                  }
-                },
-                '& .MuiInputLabel-root.Mui-focused': {
-                  color: 'primary.main',
-                  fontWeight: 500
-                }
-              }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PhoneOutlined color="action" />
-                  </InputAdornment>
-                )
-              }}
-            />
-            <TextField
-              fullWidth
-              margin="normal"
-              id="password"
-              name="password"
-              label="Password"
-              type="password"
-              value={formik.values.password}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.password && Boolean(formik.errors.password)}
-              helperText={formik.touched.password && formik.errors.password}
-              variant="outlined"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: '8px',
-                  '&.Mui-focused fieldset': {
-                    borderColor: 'primary.main',
-                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
-                  },
-                  '&:hover fieldset': {
-                    borderColor: 'action.hover'
-                  }
-                },
-                '& .MuiInputLabel-root.Mui-focused': {
-                  color: 'primary.main',
-                  fontWeight: 500
-                }
-              }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LockOutlined color="action" />
-                  </InputAdornment>
-                )
-              }}
-            />
-            <TextField
-              fullWidth
-              margin="normal"
-              name="confirmPassword"
-              label="Confirm Password"
-              type="password"
-              value={formik.values.confirmPassword}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.confirmPassword && Boolean(formik.errors.confirmPassword)}
-              helperText={formik.touched.confirmPassword && formik.errors.confirmPassword}
-              variant="outlined"
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: '8px',
-                  '&.Mui-focused fieldset': {
-                    borderColor: 'primary.main',
-                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
-                  },
-                  '&:hover fieldset': {
-                    borderColor: 'action.hover'
-                  }
-                },
-                '& .MuiInputLabel-root.Mui-focused': {
-                  color: 'primary.main',
-                  fontWeight: 500
-                }
-              }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LockOutlined color="action" />
-                  </InputAdornment>
-                )
-              }}
-            />
-          </>
-        );
-
-      case 2: // Store Info
+    // Map of step indices to their corresponding content
+    const stepContent: Record<number, () => JSX.Element | null> = {
+      0: () => (
+        <FormControl fullWidth margin="normal">
+          <InputLabel id="user-type-label">Account Type</InputLabel>
+          <Select
+            labelId="user-type-label"
+            id="userType"
+            name="userType"
+            value={formik.values.userType}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.userType && Boolean(formik.errors.userType)}
+            label="Account Type"
+          >
+            <MenuItem value="CUSTOMER">Customer</MenuItem>
+            <MenuItem value="STORE_OWNER">Store Owner</MenuItem>
+          </Select>
+        </FormControl>
+      ),
+      1: () => (
+        <>
+          <TextField
+            fullWidth
+            margin="normal"
+            id="name"
+            name="name"
+            label="Name"
+            value={formik.values.name}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.name && Boolean(formik.errors.name)}
+            helperText={formik.touched.name && formik.errors.name}
+          />
+          <TextField
+            fullWidth
+            margin="normal"
+            id="email"
+            name="email"
+            label="Email"
+            value={formik.values.email}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.email && Boolean(formik.errors.email)}
+            helperText={formik.touched.email && formik.errors.email}
+          />
+          <TextField
+            fullWidth
+            margin="normal"
+            id="phone"
+            name="phone"
+            label="Phone Number"
+            value={formik.values.phone}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.phone && Boolean(formik.errors.phone)}
+            helperText={formik.touched.phone && formik.errors.phone}
+          />
+          <TextField
+            fullWidth
+            margin="normal"
+            id="password"
+            name="password"
+            label="Password"
+            type="password"
+            value={formik.values.password}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.password && Boolean(formik.errors.password)}
+            helperText={formik.touched.password && formik.errors.password}
+          />
+          <TextField
+            fullWidth
+            margin="normal"
+            id="confirmPassword"
+            name="confirmPassword"
+            label="Confirm Password"
+            type="password"
+            value={formik.values.confirmPassword}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.confirmPassword && Boolean(formik.errors.confirmPassword)}
+            helperText={formik.touched.confirmPassword && formik.errors.confirmPassword}
+          />
+        </>
+      ),
+      2: () => {
         if (formik.values.userType !== 'STORE_OWNER') return null;
         return (
           <>
@@ -578,154 +484,153 @@ const RegisterPage = () => {
             />
           </>
         );
+      },
+      3: () => (
+        <>
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="security-question-1">Security Question 1</InputLabel>
+            <Select
+              labelId="security-question-1"
+              id="securityQuestion1"
+              name="securityQuestion1"
+              value={formik.values.securityQuestion1}
+              onChange={formik.handleChange}
+              onBlur={formik.handleBlur}
+              error={formik.touched.securityQuestion1 && Boolean(formik.errors.securityQuestion1)}
+              label="Security Question 1"
+            >
+              {securityQuestions.map((question) => (
+                <MenuItem key={question} value={question}>
+                  {question}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText error>
+              {formik.touched.securityQuestion1 && formik.errors.securityQuestion1}
+            </FormHelperText>
+          </FormControl>
 
-      case 3: // Security Questions
-        return (
-          <>
-            <FormControl fullWidth margin="normal">
-              <InputLabel id="security-question-1">Security Question 1</InputLabel>
-              <Select
-                labelId="security-question-1"
-                id="securityQuestion1"
-                name="securityQuestion1"
-                value={formik.values.securityQuestion1}
-                onChange={formik.handleChange}
-                onBlur={formik.handleBlur}
-                error={formik.touched.securityQuestion1 && Boolean(formik.errors.securityQuestion1)}
-                label="Security Question 1"
-              >
-                {securityQuestions.map((question) => (
+          <TextField
+            fullWidth
+            margin="normal"
+            id="securityAnswer1"
+            name="securityAnswer1"
+            label="Answer 1"
+            value={formik.values.securityAnswer1}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.securityAnswer1 && Boolean(formik.errors.securityAnswer1)}
+            helperText={formik.touched.securityAnswer1 && formik.errors.securityAnswer1}
+          />
+
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="security-question-2">Security Question 2</InputLabel>
+            <Select
+              labelId="security-question-2"
+              id="securityQuestion2"
+              name="securityQuestion2"
+              value={formik.values.securityQuestion2}
+              onChange={formik.handleChange}
+              onBlur={formik.handleBlur}
+              error={formik.touched.securityQuestion2 && Boolean(formik.errors.securityQuestion2)}
+              label="Security Question 2"
+            >
+              {securityQuestions
+                .filter(q => q !== formik.values.securityQuestion1)
+                .map((question) => (
                   <MenuItem key={question} value={question}>
                     {question}
                   </MenuItem>
                 ))}
-              </Select>
-              <FormHelperText error>
-                {formik.touched.securityQuestion1 && formik.errors.securityQuestion1}
-              </FormHelperText>
-            </FormControl>
+            </Select>
+            <FormHelperText error>
+              {formik.touched.securityQuestion2 && formik.errors.securityQuestion2}
+            </FormHelperText>
+          </FormControl>
 
-            <TextField
-              fullWidth
-              margin="normal"
-              id="securityAnswer1"
-              name="securityAnswer1"
-              label="Answer 1"
-              value={formik.values.securityAnswer1}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.securityAnswer1 && Boolean(formik.errors.securityAnswer1)}
-              helperText={formik.touched.securityAnswer1 && formik.errors.securityAnswer1}
-            />
-
-            <FormControl fullWidth margin="normal">
-              <InputLabel id="security-question-2">Security Question 2</InputLabel>
-              <Select
-                labelId="security-question-2"
-                id="securityQuestion2"
-                name="securityQuestion2"
-                value={formik.values.securityQuestion2}
+          <TextField
+            fullWidth
+            margin="normal"
+            id="securityAnswer2"
+            name="securityAnswer2"
+            label="Answer 2"
+            value={formik.values.securityAnswer2}
+            onChange={formik.handleChange}
+            onBlur={formik.handleBlur}
+            error={formik.touched.securityAnswer2 && Boolean(formik.errors.securityAnswer2)}
+            helperText={formik.touched.securityAnswer2 && formik.errors.securityAnswer2}
+          />
+        </>
+      ),
+      4: () => (
+        <>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={formik.values.enable2FA}
                 onChange={formik.handleChange}
-                onBlur={formik.handleBlur}
-                error={formik.touched.securityQuestion2 && Boolean(formik.errors.securityQuestion2)}
-                label="Security Question 2"
-              >
-                {securityQuestions
-                  .filter(q => q !== formik.values.securityQuestion1)
-                  .map((question) => (
-                    <MenuItem key={question} value={question}>
-                      {question}
-                    </MenuItem>
-                  ))}
-              </Select>
-              <FormHelperText error>
-                {formik.touched.securityQuestion2 && formik.errors.securityQuestion2}
-              </FormHelperText>
-            </FormControl>
+                name="enable2FA"
+                color="primary"
+              />
+            }
+            label="Enable Two-Factor Authentication (2FA)"
+          />
 
+          {formik.values.enable2FA && (
             <TextField
               fullWidth
               margin="normal"
-              id="securityAnswer2"
-              name="securityAnswer2"
-              label="Answer 2"
-              value={formik.values.securityAnswer2}
+              id="phoneFor2FA"
+              name="phoneFor2FA"
+              label="Phone Number for 2FA"
+              value={formik.values.phoneFor2FA}
               onChange={formik.handleChange}
               onBlur={formik.handleBlur}
-              error={formik.touched.securityAnswer2 && Boolean(formik.errors.securityAnswer2)}
-              helperText={formik.touched.securityAnswer2 && formik.errors.securityAnswer2}
+              error={formik.touched.phoneFor2FA && Boolean(formik.errors.phoneFor2FA)}
+              helperText={formik.touched.phoneFor2FA && formik.errors.phoneFor2FA}
             />
-          </>
-        );
+          )}
 
-      case 4: // Preferences
-        return (
-          <>
+          <FormControl
+            required
+            error={formik.touched.acceptTerms && Boolean(formik.errors.acceptTerms)}
+            component="fieldset"
+            sx={{ mt: 2 }}
+          >
             <FormControlLabel
               control={
                 <Checkbox
-                  checked={formik.values.enable2FA}
+                  checked={formik.values.acceptTerms}
                   onChange={formik.handleChange}
-                  name="enable2FA"
+                  name="acceptTerms"
                   color="primary"
                 />
               }
-              label="Enable Two-Factor Authentication (2FA)"
+              label={
+                <span>
+                  I agree to the{' '}
+                  <Link href="/terms" target="_blank" rel="noopener noreferrer">
+                    Terms of Service
+                  </Link>{' '}
+                  and{' '}
+                  <Link href="/privacy" target="_blank" rel="noopener noreferrer">
+                    Privacy Policy
+                  </Link>
+                </span>
+              }
             />
-
-            {formik.values.enable2FA && (
-              <TextField
-                fullWidth
-                margin="normal"
-                id="phoneFor2FA"
-                name="phoneFor2FA"
-                label="Phone Number for 2FA"
-                value={formik.values.phoneFor2FA}
-                onChange={formik.handleChange}
-                onBlur={formik.handleBlur}
-                error={formik.touched.phoneFor2FA && Boolean(formik.errors.phoneFor2FA)}
-                helperText={formik.touched.phoneFor2FA && formik.errors.phoneFor2FA}
-              />
-            )}
-
-            <FormControl
-              required
-              error={formik.touched.acceptTerms && Boolean(formik.errors.acceptTerms)}
-              component="fieldset"
-              sx={{ mt: 2 }}
-            >
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formik.values.acceptTerms}
-                    onChange={formik.handleChange}
-                    name="acceptTerms"
-                  />
-                }
-                label={
-                  <span>
-                    I agree to the{' '}
-                    <Link href="/terms" target="_blank" rel="noopener noreferrer">
-                      Terms of Service
-                    </Link>{' '}
-                    and{' '}
-                    <Link href="/privacy" target="_blank" rel="noopener noreferrer">
-                      Privacy Policy
-                    </Link>
-                  </span>
-                }
-              />
-              <FormHelperText>
-                {formik.touched.acceptTerms && formik.errors.acceptTerms}
-              </FormHelperText>
-            </FormControl>
-          </>
+            <FormHelperText>
+              {formik.touched.acceptTerms && formik.errors.acceptTerms}
+            </FormHelperText>
+          </FormControl>
         );
 
-      default:
-        return <div>Unknown step</div>;
-    }
-  }, [currentStep, formik.values, formik.handleChange, formik.handleBlur, formik.touched, formik.errors]);
+    };
+
+    // Get the current step content based on the step index
+    const stepContentFn = stepContent[step];
+    return stepContentFn ? stepContentFn() : <div>Unknown step</div>;
+  }, [currentStep, formik]);
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
@@ -962,4 +867,5 @@ const RegisterPage = () => {
 );
 };
 
+// Export as default with the correct type
 export default RegisterPage;

@@ -98,12 +98,12 @@ export class UserResponseDto {
 export class UserProfileResponseDto extends UserResponseDto {
   @Expose()
   @Type(() => Date)
-  lastLogin: Date;
+  override lastLogin: Date;
 
   @Expose()
-  securityQuestions: Array<{ id?: string; question: string }>;
+  override securityQuestions: Array<{ id?: string; question: string }>;
 
-  static fromUser(user: any): UserProfileResponseDto {
+  static override fromUser(user: any): UserProfileResponseDto {
     const base = super.fromUser(user);
     const dto = new UserProfileResponseDto({
       ...base,
@@ -118,19 +118,19 @@ export class UserProfileResponseDto extends UserResponseDto {
 
 export class AdminUserResponseDto extends UserResponseDto {
   @Expose()
-  twoFactorEnabled: boolean;
+  override twoFactorEnabled: boolean;
 
   @Expose()
   @Type(() => Date)
-  lastLogin: Date;
+  override lastLogin: Date;
 
   @Expose()
-  storeId: string;
+  override storeId: string;
 
   @Expose()
   storeName: string;
 
-  static fromUser(user: any): AdminUserResponseDto {
+  static override fromUser(user: any): AdminUserResponseDto {
     const base = super.fromUser(user);
     return new AdminUserResponseDto({
       ...base,

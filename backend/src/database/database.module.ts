@@ -1,29 +1,34 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-
-export const getDatabaseModule = () => TypeOrmModule.forRootAsync({
-  imports: [ConfigModule],
-  useFactory: (configService: ConfigService) => ({
-    type: 'postgres',
-    host: configService.get('DB_HOST', 'localhost'),
-    port: configService.get<number>('DB_PORT', 5432),
-    username: configService.get('DB_USERNAME', 'postgres'),
-    password: configService.get('DB_PASSWORD', 'postgres'),
-    database: configService.get('DB_DATABASE', 'store_rating_db'),
-    entities: [__dirname + '/../**/*.entity{.ts,.js}'],
-    synchronize: process.env.NODE_ENV !== 'production',
-    logging: process.env.NODE_ENV !== 'production',
-  }),
-  inject: [ConfigService],
-});
+import { DataSource } from 'typeorm';
+import { User } from '../users/entities/user.entity';
+import { Store } from '../stores/entities/store.entity';
+import { Rating } from '../ratings/entities/rating.entity';
+import * as path from 'path';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        type: 'sqlite',
+        database: path.join(process.cwd(), 'database.sqlite'),
+        entities: [User, Store, Rating],
+        synchronize: true, // Auto-create tables in development
+        logging: configService.get('NODE_ENV') === 'development' ? ['query', 'error'] : ['error'],
+      }),
+      dataSourceFactory: async (options) => {
+        if (!options) {
+          throw new Error('Database configuration options are required');
+        }
+        const dataSource = new DataSource(options);
+        await dataSource.initialize();
+        return dataSource;
+      },
     }),
-    getDatabaseModule(),
   ],
+  exports: [TypeOrmModule],
 })
 export class DatabaseModule {}

@@ -5,29 +5,55 @@ import {
   ManyToOne, 
   CreateDateColumn, 
   UpdateDateColumn, 
-  JoinColumn 
+  JoinColumn,
+  Index
 } from 'typeorm';
-import { IsInt, Min, Max, IsString, IsOptional, IsUUID } from 'class-validator';
+import { 
+  IsInt, 
+  Min, 
+  Max, 
+  IsString, 
+  IsOptional, 
+  IsUUID, 
+  IsNumber,
+  IsDateString,
+  IsBoolean,
+  Length
+} from 'class-validator';
 import { User } from '../../users/entities/user.entity';
 import { Store } from '../../stores/entities/store.entity';
 
 @Entity('ratings')
+@Index(['userId', 'storeId'], { unique: true }) // Ensure one rating per user per store
 export class Rating {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column({ type: 'int' })
   @IsInt()
-  @Min(1)
-  @Max(5)
+  @Min(1, { message: 'Rating must be at least 1' })
+  @Max(5, { message: 'Rating cannot be more than 5' })
   rating: number;
 
   @Column({ type: 'text', nullable: true })
   @IsString()
   @IsOptional()
+  @Length(0, 1000, { message: 'Comment cannot exceed 1000 characters' })
   comment?: string;
 
-  @ManyToOne(() => User, user => user.ratings, { onDelete: 'CASCADE' })
+  @Column({ type: 'boolean', default: false })
+  @IsBoolean()
+  isEdited: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  @IsDateString()
+  @IsOptional()
+  editedAt: Date;
+
+  @ManyToOne(() => User, user => user.ratings, { 
+    onDelete: 'CASCADE',
+    eager: false 
+  })
   @JoinColumn({ name: 'userId' })
   user: User;
 
@@ -35,7 +61,10 @@ export class Rating {
   @IsUUID()
   userId: string;
 
-  @ManyToOne(() => Store, store => store.ratings, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Store, store => store.ratings, { 
+    onDelete: 'CASCADE',
+    eager: false 
+  })
   @JoinColumn({ name: 'storeId' })
   store: Store;
 
@@ -43,11 +72,31 @@ export class Rating {
   @IsUUID()
   storeId: string;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
+
+  /**
+   * Updates the rating with new values
+   * @param newRating New rating value (1-5)
+   * @param newComment Optional new comment
+   */
+  public update(newRating: number, newComment?: string): void {
+    if (newRating < 1 || newRating > 5) {
+      throw new Error('Rating must be between 1 and 5');
+    }
+
+    this.rating = newRating;
+    
+    if (newComment !== undefined) {
+      this.comment = newComment;
+    }
+    
+    this.isEdited = true;
+    this.editedAt = new Date();
+  }
 
   // Ensure rating is between 1 and 5
   public validateRating(): boolean {

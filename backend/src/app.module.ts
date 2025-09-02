@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { CacheModule } from '@nestjs/cache-manager';
+import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -9,6 +9,9 @@ import { StoresModule } from './stores/stores.module';
 import { RatingsModule } from './ratings/ratings.module';
 import { DatabaseModule } from './database/database.module';
 import { RedisModule } from './redis/redis.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { AdminModule } from './admin/admin.module';
+import * as redisStore from 'cache-manager-redis-store';
 
 @Module({
   imports: [
@@ -16,38 +19,22 @@ import { RedisModule } from './redis/redis.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    RedisModule,
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        // ... your existing TypeORM config
-        cache: {
-          type: 'redis',
-          options: {
-            host: configService.get('REDIS_HOST', 'localhost'),
-            port: configService.get('REDIS_PORT', 6379),
-          },
-          duration: 30000, // 30 seconds
-          ignoreErrors: true,
-        },
-      }),
+    CacheModule.register({
+      isGlobal: true,
+      store: redisStore,
+      host: process.env.REDIS_HOST || 'localhost',
+      port: process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : 6379,
+      ttl: 300, // 5 minutes
     }),
     DatabaseModule,
     AuthModule,
     UsersModule,
     StoresModule,
     RatingsModule,
-    RedisModule,
+    DashboardModule,
+    AdminModule,
   ],
   controllers: [AppController],
-  providers: [
-    AppService,
-    {
-      provide: 'CACHE_MANAGER',
-      useFactory: (cacheManager: any) => cacheManager,
-      inject: ['CACHE_MANAGER'],
-    },
-  ],
+  providers: [AppService],
 })
 export class AppModule {}

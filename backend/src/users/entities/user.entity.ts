@@ -3,25 +3,35 @@ import {
   Column, 
   PrimaryGeneratedColumn, 
   CreateDateColumn, 
-  AfterLoad, 
   UpdateDateColumn, 
   BeforeInsert, 
-  BeforeUpdate, 
+  BeforeUpdate,
+  AfterLoad,
   OneToMany,
   OneToOne,
   JoinColumn
 } from 'typeorm';
-import { IsEmail, IsEnum, IsString, Length, IsOptional, IsPhoneNumber, IsArray, ValidateNested, IsBoolean } from 'class-validator';
+import { 
+  IsEmail, 
+  IsEnum, 
+  IsString, 
+  Length, 
+  IsOptional, 
+  IsPhoneNumber, 
+  IsArray, 
+  ValidateNested, 
+  IsBoolean
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import * as bcrypt from 'bcrypt';
 import { Store } from '../../stores/entities/store.entity';
 import { Rating } from '../../ratings/entities/rating.entity';
+import { VerificationToken } from '../../auth/entities/verification-token.entity';
 
 export enum UserRole {
-  USER = 'USER',
-  CUSTOMER = 'CUSTOMER',
-  STORE_OWNER = 'STORE_OWNER',
-  ADMIN = 'ADMIN'
+  CUSTOMER = 'customer',
+  STORE_OWNER = 'store_owner',
+  ADMIN = 'admin'
 }
 
 export class SecurityQuestion {
@@ -39,36 +49,93 @@ export class User {
 
   @Column({ length: 60 })
   @IsString()
-  @Length(2, 60)
+  @Length(2, 60, { message: 'Name must be between 2 and 60 characters' })
   name: string;
 
   @Column({ unique: true })
-  @IsEmail()
+  @IsEmail({}, { message: 'Please provide a valid email' })
   email: string;
 
   @Column({ nullable: true })
   @IsString()
   @IsOptional()
-  @Length(10, 15)
+  @Length(10, 15, { message: 'Phone number must be between 10 and 15 digits' })
   phone?: string;
 
-  @Column()
+  @Column({ select: false })
   @IsString()
+  @Length(8, 100, { message: 'Password must be at least 8 characters' })
   password: string;
 
-  @Column({ type: 'varchar', length: 400, nullable: true })
+  @Column({ 
+    type: 'enum', 
+    enum: UserRole, 
+    default: UserRole.CUSTOMER 
+  })
+  @IsEnum(UserRole, { message: 'Invalid role' })
+  role: UserRole;
+
+  @Column({ type: 'boolean', default: true })
+  isActive: boolean;
+
+  @Column({ type: 'boolean', default: false, name: 'is_email_verified' })
+  isEmailVerified: boolean;
+
+  @Column({ name: 'two_factor_secret', type: 'varchar', nullable: true, select: false })
+  twoFactorSecret: string | null;
+
+  @Column({ name: 'is_two_factor_enabled', type: 'boolean', default: false })
+  isTwoFactorEnabled: boolean;
+
+  @Column({ name: 'refresh_token', type: 'varchar', nullable: true, select: false })
+  refreshToken: string | null;
+
+  @Column({ type: 'text', nullable: true })
   @IsString()
   @IsOptional()
-  @Length(0, 400)
   address?: string;
 
-  @Column({
-    type: 'enum',
-    enum: UserRole,
-    default: UserRole.CUSTOMER
+  @Column({ default: true })
+  @IsBoolean()
+  emailVerified: boolean = false;
+
+  @Column({ type: 'timestamp', nullable: true })
+  @IsOptional()
+  lastLogin?: Date;
+
+  @Column({ type: 'jsonb', nullable: true })
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => SecurityQuestion)
+  securityQuestions?: SecurityQuestion[];
+
+  @Column({ nullable: true })
+  @IsString()
+  @IsOptional()
+  resetPasswordToken?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  @IsOptional()
+  resetPasswordExpires?: Date;
+
+  @OneToMany(() => Rating, rating => rating.user, { 
+    cascade: true,
+    onDelete: 'CASCADE' 
   })
-  @IsEnum(UserRole)
-  role: UserRole;
+  @IsOptional()
+  ratings?: Rating[];
+
+  @OneToMany(() => VerificationToken, token => token.user)
+  verificationTokens: VerificationToken[];
+
+  @OneToOne(() => Store, store => store.owner, { 
+    nullable: true,
+    onDelete: 'SET NULL'
+  })
+  @JoinColumn()
+  @IsOptional()
+  store?: Store;
 
   @CreateDateColumn()
   createdAt: Date;
@@ -76,36 +143,12 @@ export class User {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @Column({ type: 'jsonb', nullable: true })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => SecurityQuestion)
+  @OneToMany(() => Store, store => store.owner, { 
+    cascade: true,
+    onDelete: 'CASCADE' 
+  })
   @IsOptional()
-  securityQuestions?: SecurityQuestion[];
-
-  @Column({ default: false })
-  @IsBoolean()
-  @IsOptional()
-  enable2FA?: boolean;
-
-  @Column({ nullable: true })
-  @IsString()
-  @IsOptional()
-  @IsPhoneNumber()
-  phoneFor2FA?: string;
-
-  @OneToMany(() => Store, store => store.owner)
-  stores?: Store[];
-
-  @OneToMany(() => Rating, rating => rating.user)
-  ratings: Rating[];
-
-  @OneToMany(() => Store, store => store.owner, { cascade: true })
-  ownedStores: Store[];
-
-  @OneToOne(() => Store, store => store.owner, { cascade: true })
-  @JoinColumn()
-  store: Store;
+  ownedStores?: Store[];
 
   private tempPassword: string;
 
@@ -116,7 +159,7 @@ export class User {
 
   @BeforeInsert()
   @BeforeUpdate()
-  async hashPassword() {
+  async hashPassword(): Promise<void> {
     if (this.password && this.password !== this.tempPassword) {
       const salt = await bcrypt.genSalt();
       this.password = await bcrypt.hash(this.password, salt);
@@ -124,6 +167,7 @@ export class User {
   }
 
   async validatePassword(password: string): Promise<boolean> {
+    if (!this.password) return false;
     return bcrypt.compare(password, this.password);
   }
 }

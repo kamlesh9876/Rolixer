@@ -4,7 +4,7 @@ import StoreIcon from '@mui/icons-material/Store';
 import PersonIcon from '@mui/icons-material/Person';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 
-type UserType = 'CUSTOMER' | 'STORE_OWNER' | 'ADMIN';
+export type UserType = 'CUSTOMER' | 'STORE_OWNER' | 'ADMIN';
 
 interface UserTypeSelectorProps {
   onSelect: (userType: UserType) => void;
@@ -93,4 +93,3 @@ const UserTypeSelector: React.FC<UserTypeSelectorProps> = ({ onSelect, selectedT
 };
 
 export default UserTypeSelector;
-export type { UserType };

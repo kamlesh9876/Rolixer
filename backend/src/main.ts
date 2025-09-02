@@ -1,18 +1,56 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import { ValidationPipe, Logger, HttpException, HttpStatus, LoggerService } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
+class FileLogger implements LoggerService {
+  private logFile: string;
+  private logger: Logger;
+
+  constructor() {
+    this.logFile = path.join(process.cwd(), 'backend.log');
+    this.logger = new Logger('Bootstrap');
+  }
+
+  log(message: string) {
+    this.logger.log(message);
+    this.writeToFile(`[LOG] ${message}`);
+  }
+
+  error(message: string, trace: string) {
+    this.logger.error(message, trace);
+    this.writeToFile(`[ERROR] ${message}\n${trace}`);
+  }
+
+  warn(message: string) {
+    this.logger.warn(message);
+    this.writeToFile(`[WARN] ${message}`);
+  }
+
+  private writeToFile(message: string) {
+    const timestamp = new Date().toISOString();
+    fs.appendFileSync(this.logFile, `[${timestamp}] ${message}\n`);
+  }
+}
+
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  const configService = app.get(ConfigService);
-  const logger = new Logger('Bootstrap');
+  const logger = new FileLogger();
+  
+  try {
+    logger.log('Starting application...');
+    const app = await NestFactory.create(AppModule, {
+      logger,
+    });
+    const configService = app.get(ConfigService);
 
   // Enable CORS
   app.enableCors({
-    origin: configService.get('FRONTEND_URL', 'http://localhost:3000'),
+    origin: '*', // For development only - restrict in production
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    allowedHeaders: 'Content-Type, Accept, Authorization',
     credentials: true,
   });
 
@@ -34,10 +72,14 @@ async function bootstrap() {
   // Global error handling
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  const port = configService.get('PORT', 3000);
-  await app.listen(port);
-  
-  logger.log(`Application is running on: http://localhost:${port}/api/v1`);
+    const port = configService.get('PORT', 3001);
+    await app.listen(port);
+    
+    logger.log(`Application is running on: http://localhost:${port}/api/v1`);
+  } catch (error) {
+    logger.error('Failed to start application', error.stack || error.message);
+    process.exit(1);
+  }
   logger.log(`Environment: ${configService.get('NODE_ENV')}`);
 }
 

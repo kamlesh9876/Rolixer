@@ -1,18 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  Query,
-  UseGuards,
-  Req,
-  ParseIntPipe,
-  DefaultValuePipe,
-  BadRequestException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Req, ParseIntPipe, DefaultValuePipe, BadRequestException } from '@nestjs/common';
 import { RatingsService } from './ratings.service';
 import { CreateRatingDto } from './dto/create-rating.dto';
 import { UpdateRatingDto } from './dto/update-rating.dto';
@@ -29,7 +15,7 @@ export class RatingsController {
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.USER, UserRole.ADMIN)
+  @Roles(UserRole.CUSTOMER, UserRole.ADMIN) // Changed from USER to CUSTOMER
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Rate a store' })
   @ApiResponse({ status: 201, description: 'Rating successfully created' })
@@ -37,13 +23,13 @@ export class RatingsController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Store not found' })
   @ApiResponse({ status: 409, description: 'You have already rated this store' })
-  create(@Body() createRatingDto: CreateRatingDto, @Req() req) {
+  create(@Body() createRatingDto: CreateRatingDto, @Req() req: any) { // Added type for req
     return this.ratingsService.create(createRatingDto, req.user.userId);
   }
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.USER)
+  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.CUSTOMER) // Changed from USER to CUSTOMER
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get all ratings' })
   @ApiQuery({ name: 'storeId', required: false })
@@ -135,7 +121,7 @@ export class RatingsController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.USER, UserRole.ADMIN)
+  @Roles(UserRole.CUSTOMER, UserRole.ADMIN) // Changed from USER to CUSTOMER
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a rating' })
   @ApiResponse({ status: 200, description: 'Rating updated' })
@@ -145,7 +131,7 @@ export class RatingsController {
   update(
     @Param('id') id: string,
     @Body() updateRatingDto: UpdateRatingDto,
-    @Req() req,
+    @Req() req: any, // Added type for req
   ) {
     const isAdmin = req.user.role === UserRole.ADMIN;
     return this.ratingsService.update(id, updateRatingDto, req.user.userId, isAdmin);
@@ -153,13 +139,13 @@ export class RatingsController {
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.USER, UserRole.ADMIN, UserRole.STORE_OWNER)
+  @Roles(UserRole.CUSTOMER, UserRole.ADMIN, UserRole.STORE_OWNER) // Changed from USER to CUSTOMER
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a rating' })
   @ApiResponse({ status: 200, description: 'Rating deleted' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Rating not found' })
-  remove(@Param('id') id: string, @Req() req) {
+  remove(@Param('id') id: string, @Req() req: any) { // Added type for req
     const isAdmin = req.user.role === UserRole.ADMIN;
     const isStoreOwner = req.user.role === UserRole.STORE_OWNER;
     return this.ratingsService.remove(id, req.user.userId, isAdmin || isStoreOwner);

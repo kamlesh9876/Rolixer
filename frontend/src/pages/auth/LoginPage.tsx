@@ -9,20 +9,18 @@ import {
   Typography,
   TextField,
   Button,
-  Paper,
   Link,
   Alert,
   Stepper,
   Step,
   StepLabel,
   StepContent,
-  Card,
-  CardContent,
-  Grid,
-  IconButton
+  IconButton,
+  Grid
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import UserTypeSelector, { UserType } from '../../components/auth/UserTypeSelector';
+import UserTypeSelector from '../../components/auth/UserTypeSelector';
+import type { UserType } from '../../components/auth/UserTypeSelector';
 
 const validationSchema = Yup.object({
   email: Yup.string().email('Invalid email address').required('Email is required'),

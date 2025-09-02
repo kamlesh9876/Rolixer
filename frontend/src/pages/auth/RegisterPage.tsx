@@ -1,19 +1,34 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useFormik } from 'formik';
+import { useFormik, FormikHelpers } from 'formik';
 import * as Yup from 'yup';
+import type { FormikErrors, FormikTouched, FormikValues } from 'formik';
 import {
   Box,
-  Button,
-  FormControl,
-  FormControlLabel,
-  FormHelperText,
-  InputLabel,
-  MenuItem,
-  Select,
-  Switch,
-  TextField,
   Typography,
+  TextField,
+  Button,
+  Link,
+  Alert,
+  Stepper,
+  Step,
+  StepLabel,
+  StepContent,
+  IconButton,
+  Grid,
+  Paper,
+  Fade,
+  CircularProgress,
+  FormHelperText,
+  FormControlLabel,
+  Checkbox,
+  InputAdornment,
+  IconButton as MuiIconButton,
+  Tooltip,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -22,7 +37,26 @@ import {
 } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserType } from '../../types';
+import {
+  PersonOutlineOutlined,
+  EmailOutlined,
+  PhoneOutlined,
+  LockOutlined,
+  Visibility,
+  VisibilityOff,
+  StoreOutlined,
+  LocationOnOutlined,
+  HelpOutlineOutlined
+} from '@mui/icons-material';
 
+// Security questions for the form
+const securityQuestions = [
+  'What was your first pet\'s name?',
+  'What city were you born in?',
+  'What is your mother\'s maiden name?',
+  'What was your first car?',
+  'What is the name of your first school?'
+];
 
 // Form values type
 type FormValues = {
@@ -34,7 +68,6 @@ type FormValues = {
   confirmPassword: string;
   storeName: string;
   address: string;
-  securityQuestions: Array<{ question: string; answer: string }>;
   securityQuestion1: string;
   securityQuestion2: string;
   securityAnswer1: string;
@@ -45,15 +78,15 @@ type FormValues = {
 };
 
 // Form step type
-interface FormStep {
+interface FormStep<T extends FormikValues> {
   label: string;
-  fields: string[];
-  skip?: (values: FormValues) => boolean;
-  validate?: (values: FormValues) => boolean;
+  fields: (keyof T)[];
+  skip?: (values: T) => boolean;
+  validate?: (values: T) => boolean;
 }
 
 // Register data type for API
-interface RegisterData {
+type RegisterData = {
   userType: UserType;
   name: string;
   email: string;
@@ -64,16 +97,10 @@ interface RegisterData {
   securityQuestions: Array<{ question: string; answer: string }>;
   enable2FA: boolean;
   phoneFor2FA?: string;
-}
-
-// Move security questions outside the component
-const securityQuestions = [
-  'What was your first pet\'s name?',
-  'What city were you born in?',
-  'What is your mother\'s maiden name?',
-  'What was your first car?',
-  'What is the name of your first school?'
-];
+} & (
+  | { userType: 'STORE_OWNER'; storeName: string; address: string }
+  | { userType: 'CUSTOMER' | 'ADMIN' }
+)
 
 const RegisterPage = () => {
   const [searchParams] = useSearchParams();
@@ -81,201 +108,88 @@ const RegisterPage = () => {
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState(0);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Combined validation schema
-  const validationSchema = useMemo(() => Yup.object().shape({
-    userType: Yup.string().oneOf(['CUSTOMER', 'STORE_OWNER'] as const).required('Required'),
-    name: Yup.string().required('Name is required'),
-    email: Yup.string().email('Invalid email').required('Email is required'),
-    phone: Yup.string().required('Phone number is required'),
-    password: Yup.string()
-      .min(8, 'Password must be at least 8 characters')
-      .required('Password is required'),
-    confirmPassword: Yup.string()
-      .oneOf([Yup.ref('password')], 'Passwords must match')
-      .required('Please confirm your password'),
-    storeName: Yup.string().when('userType', {
-      is: 'STORE_OWNER',
-      then: (schema) => schema.required('Store name is required'),
-      otherwise: (schema) => schema.notRequired()
-    }),
-    address: Yup.string().when('userType', {
-      is: 'STORE_OWNER',
-      then: (schema) => schema.required('Address is required'),
-      otherwise: (schema) => schema.notRequired()
-    }),
-    securityQuestion1: Yup.string().required('Security question 1 is required'),
-    securityAnswer1: Yup.string().required('Answer is required'),
-    securityQuestion2: Yup.string()
-      .required('Security question 2 is required')
-      .test(
-        'different-questions',
-        'Must be different from first question',
-        function(value) {
-          return value !== this.parent.securityQuestion1;
-        }
-      ),
-    securityAnswer2: Yup.string().required('Answer is required'),
-    acceptTerms: Yup.boolean()
-      .oneOf([true], 'You must accept the terms and conditions')
-      .required('Required')
-  }), []);
+  // Form steps configuration
+  const formSteps = useMemo<Array<FormStep<FormValues>>>(
+    () => [
+      {
+        label: 'Account Type',
+        fields: ['userType'],
+        skip: () => false,
+      },
+      {
+        label: 'Personal Info',
+        fields: ['name', 'email', 'phone', 'password', 'confirmPassword'],
+        skip: () => false,
+      },
+      {
+        label: 'Store Info',
+        fields: ['storeName', 'address'],
+        skip: (values) => values.userType !== 'STORE_OWNER',
+      },
+      {
+        label: 'Security',
+        fields: ['securityQuestion1', 'securityAnswer1', 'securityQuestion2', 'securityAnswer2'],
+        skip: () => false,
+      },
+      {
+        label: 'Preferences',
+        fields: ['enable2FA', 'phoneFor2FA', 'acceptTerms'],
+        skip: () => false,
+      },
+    ],
+    []
+  ) as Array<FormStep<FormValues>>;
 
-  const formSteps = useMemo<FormStep[]>(() => [
-    {
-      label: 'Account Type',
-      fields: ['userType'],
-      validate: (values: FormValues) => {
-        const schema = Yup.object().shape({
-          userType: Yup.string().oneOf(['CUSTOMER', 'STORE_OWNER'] as const).required('Required')
-        });
-        return schema.isValidSync(values, { abortEarly: false });
-      }
-    },
-    {
-      label: 'Personal Information',
-      fields: ['name', 'email', 'phone'],
-      validate: (values: FormValues) => {
-        const schema = Yup.object().shape({
-          name: Yup.string().required('Name is required'),
-          email: Yup.string().email('Invalid email').required('Email is required'),
-          phone: Yup.string().required('Phone number is required')
-        });
-        return schema.isValidSync(values, { abortEarly: false });
-      }
-    },
-    {
-      label: 'Password',
-      fields: ['password', 'confirmPassword'],
-      validate: (values: FormValues) => {
-        const schema = Yup.object().shape({
-          password: Yup.string()
-            .min(8, 'Password must be at least 8 characters')
-            .required('Password is required'),
-          confirmPassword: Yup.string()
-            .oneOf([Yup.ref('password')], 'Passwords must match')
-            .required('Please confirm your password')
-        });
-        return schema.isValidSync(values, { abortEarly: false });
-      }
-    },
-    {
-      label: 'Store Information',
-      fields: ['storeName', 'address'],
-      skip: (values: FormValues) => values.userType !== 'STORE_OWNER',
-      validate: (values: FormValues) => {
-        if (values.userType !== 'STORE_OWNER') return true;
-        const schema = Yup.object().shape({
-          storeName: Yup.string().required('Store name is required'),
-          address: Yup.string().required('Address is required')
-        });
-        return schema.isValidSync(values, { abortEarly: false });
-      }
-    },
-    {
-      label: 'Security Questions',
-      fields: ['securityQuestion1', 'securityAnswer1', 'securityQuestion2', 'securityAnswer2'],
-      validate: (values: FormValues) => {
-        const schema = Yup.object().shape({
-          securityQuestion1: Yup.string().required('Security question 1 is required'),
-          securityAnswer1: Yup.string().required('Answer is required'),
-          securityQuestion2: Yup.string()
-            .required('Security question 2 is required')
-            .test(
-              'different-questions',
-              'Must be different from first question',
-              function(value) {
-                return value !== this.parent.securityQuestion1;
-              }
-            ),
-          securityAnswer2: Yup.string().required('Answer is required')
-        });
-        return schema.isValidSync(values, { abortEarly: false });
-      }
-    },
-    {
-      label: 'Terms',
-      fields: ['acceptTerms'],
-      validate: (values: FormValues) => {
-        const schema = Yup.object().shape({
-          acceptTerms: Yup.boolean()
-            .oneOf([true], 'You must accept the terms and conditions')
-            .required('Required')
-        });
-        return schema.isValidSync(values, { abortEarly: false });
-      }
-    }
-  ], []);
+  // Form validation schema
+  const validationSchema = useMemo(() => {
+    return Yup.object().shape({
+      userType: Yup.string().required('Please select an account type'),
+      name: Yup.string().required('Name is required'),
+      email: Yup.string().email('Invalid email').required('Email is required'),
+      phone: Yup.string().required('Phone number is required'),
+      password: Yup.string()
+        .min(8, 'Password must be at least 8 characters')
+        .required('Password is required'),
+      confirmPassword: Yup.string()
+        .oneOf([Yup.ref('password')], 'Passwords must match')
+        .required('Please confirm your password'),
+      storeName: Yup.string().when('userType', {
+        is: (val: UserType) => val === 'STORE_OWNER',
+        then: (schema) => schema.required('Store name is required'),
+        otherwise: (schema) => schema.notRequired()
+      }),
+      address: Yup.string().when('userType', {
+        is: 'STORE_OWNER',
+        then: (schema) => schema.required('Address is required'),
+        otherwise: (schema) => schema.notRequired()
+      }),
+      securityQuestion1: Yup.string().required('Security question 1 is required'),
+      securityQuestion2: Yup.string()
+        .required('Security question 2 is required')
+        .notOneOf(
+          [Yup.ref('securityQuestion1')],
+          'Must be different from first question'
+        ),
+      securityAnswer1: Yup.string().required('Answer is required'),
+      securityAnswer2: Yup.string().required('Answer is required'),
+      enable2FA: Yup.boolean(),
+      phoneFor2FA: Yup.string().when('enable2FA', {
+        is: true,
+        then: (schema) => schema.required('Phone number is required for 2FA'),
+        otherwise: (schema) => schema.notRequired()
+      }),
+      acceptTerms: Yup.boolean()
+        .oneOf([true], 'You must accept the terms and conditions')
+        .required('Required'),
+    });
+  }, []);
 
+  // Formik configuration
   const formik = useFormik<FormValues>({
-    validateOnMount: true,
-    validateOnChange: true,
-    validateOnBlur: true,
-    validationSchema: Yup.object().shape({
-      ...(formSteps[activeStep]?.fields.includes('userType') && {
-        userType: Yup.string().oneOf(['CUSTOMER', 'STORE_OWNER'] as const).required('Required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('name') && {
-        name: Yup.string().required('Name is required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('email') && {
-        email: Yup.string().email('Invalid email').required('Email is required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('phone') && {
-        phone: Yup.string().required('Phone number is required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('password') && {
-        password: Yup.string()
-          .min(8, 'Password must be at least 8 characters')
-          .required('Password is required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('confirmPassword') && {
-        confirmPassword: Yup.string()
-          .oneOf([Yup.ref('password')], 'Passwords must match')
-          .required('Please confirm your password')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('storeName') && {
-        storeName: Yup.string().when('userType', {
-          is: 'STORE_OWNER',
-          then: (schema) => schema.required('Store name is required'),
-          otherwise: (schema) => schema.notRequired()
-        })
-      }),
-      ...(formSteps[activeStep]?.fields.includes('address') && {
-        address: Yup.string().when('userType', {
-          is: 'STORE_OWNER',
-          then: (schema) => schema.required('Address is required'),
-          otherwise: (schema) => schema.notRequired()
-        })
-      }),
-      ...(formSteps[activeStep]?.fields.includes('securityQuestion1') && {
-        securityQuestion1: Yup.string().required('Security question 1 is required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('securityAnswer1') && {
-        securityAnswer1: Yup.string().required('Answer is required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('securityQuestion2') && {
-        securityQuestion2: Yup.string()
-          .required('Security question 2 is required')
-          .test(
-            'different-questions',
-            'Must be different from first question',
-            function(value) {
-              return value !== this.parent.securityQuestion1;
-            }
-          )
-      }),
-      ...(formSteps[activeStep]?.fields.includes('securityAnswer2') && {
-        securityAnswer2: Yup.string().required('Answer is required')
-      }),
-      ...(formSteps[activeStep]?.fields.includes('acceptTerms') && {
-        acceptTerms: Yup.boolean()
-          .oneOf([true], 'You must accept the terms and conditions')
-          .required('Required')
-      })
-    }),
     initialValues: {
-      userType: 'CUSTOMER',
+      userType: (searchParams.get('type') as UserType) || 'CUSTOMER',
       name: '',
       email: '',
       phone: '',
@@ -283,7 +197,6 @@ const RegisterPage = () => {
       confirmPassword: '',
       storeName: '',
       address: '',
-      securityQuestions: [],
       securityQuestion1: '',
       securityQuestion2: '',
       securityAnswer1: '',
@@ -292,33 +205,34 @@ const RegisterPage = () => {
       phoneFor2FA: '',
       acceptTerms: false,
     },
+    validationSchema,
     onSubmit: async (values, { setSubmitting }) => {
       try {
-        if (activeStep === formSteps.length - 1) {
-          // Prepare the registration data
-          const registerData: RegisterData = {
-            userType: values.userType,
-            name: values.name,
-            email: values.email,
-            phone: values.phone,
-            password: values.password,
-            ...(values.userType === 'STORE_OWNER' && {
-              storeName: values.storeName,
-              address: values.address,
-            }),
-            securityQuestions: [
-              { question: values.securityQuestion1, answer: values.securityAnswer1 },
-              { question: values.securityQuestion2, answer: values.securityAnswer2 },
-            ],
-            enable2FA: values.enable2FA,
-            ...(values.enable2FA && { phoneFor2FA: values.phoneFor2FA }),
-          };
-          await register(registerData);
-          setShowSuccess(true);
-        } else {
-          setActiveStep(prev => prev + 1);
-        }
-      } catch (error) {
+        const { confirmPassword, securityQuestion1, securityQuestion2, securityAnswer1, securityAnswer2, ...rest } = values;
+        
+        // Create base register data
+        const baseData = {
+          ...rest,
+          securityQuestions: [
+            { question: securityQuestion1, answer: securityAnswer1 },
+            { question: securityQuestion2, answer: securityAnswer2 },
+          ],
+        };
+
+        // Handle store owner specific fields
+        const registerData: RegisterData = baseData.userType === 'STORE_OWNER'
+          ? {
+              ...baseData,
+              storeName: values.storeName || '',
+              address: values.address || '',
+            }
+          : baseData;
+
+        await register(registerData);
+        setShowSuccess(true);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Registration failed';
+        setError(errorMessage);
         console.error('Registration failed:', error);
       } finally {
         setSubmitting(false);
@@ -326,59 +240,145 @@ const RegisterPage = () => {
     },
   });
 
-  const handleSubmit = async (values: FormValues) => {
-    if (activeStep === formSteps.length - 1) {
-      try {
-        await register(values);
-        setShowSuccess(true);
-      } catch (error) {
-        console.error('Registration failed:', error);
-      }
-    } else {
-      setActiveStep((prev) => prev + 1);
+  // Filter out skipped steps and ensure we have at least one step
+  const { visibleSteps, currentStep, safeActiveStep, isLastStep } = useMemo(() => {
+    console.log('Calculating steps with activeStep:', activeStep);
+    const visible = formSteps.filter(step => !step.skip || !step.skip(formik.values));
+    const safeStep = Math.min(activeStep, Math.max(0, visible.length - 1));
+    
+    console.log('Visible steps:', visible);
+    console.log('Current step:', visible[safeStep]);
+    console.log('Is last step:', safeStep === visible.length - 1);
+    
+    return {
+      visibleSteps: visible,
+      currentStep: visible[safeStep],
+      safeActiveStep: safeStep,
+      isLastStep: safeStep === visible.length - 1
+    };
+  }, [formSteps, formik.values, activeStep]);
+
+  // Update activeStep if it was out of bounds
+  useEffect(() => {
+    if (activeStep !== safeActiveStep) {
+      setActiveStep(safeActiveStep);
     }
-  };
+  }, [activeStep, safeActiveStep]);
 
-  const handleCloseSuccess = () => {
-    setShowSuccess(false);
-    navigate('/login');
-  };
+  const handleNext = useCallback(async () => {
+    console.log('handleNext called, currentStep:', currentStep);
+    if (!currentStep) {
+      console.log('No current step, returning');
+      return;
+    }
 
-  // Handle going back to previous step
+    try {
+      // Mark all fields as touched to show validation errors
+      const touched = currentStep.fields.reduce((acc, field) => {
+        acc[field as string] = true;
+        return acc;
+      }, {} as Record<string, boolean>);
+      formik.setTouched(touched);
+
+      // Create a validation schema for the current step's fields
+      const stepFields = currentStep.fields.reduce<Record<string, any>>((schema, field) => {
+        const fieldName = field as string;
+        if (fieldName in validationSchema.fields) {
+          schema[fieldName] = (validationSchema.fields as Record<string, any>)[fieldName];
+        }
+        return schema;
+      }, {});
+
+      console.log('Step fields to validate:', stepFields);
+      const stepValidationSchema = Yup.object().shape(stepFields);
+      
+      // Validate only the current step's fields
+      console.log('Validating values:', formik.values);
+      await stepValidationSchema.validate(formik.values, { abortEarly: false });
+      
+      console.log('Validation passed');
+      setError(null);
+      
+      if (isLastStep) {
+        console.log('Last step, submitting form');
+        try {
+          await formik.submitForm();
+        } catch (error) {
+          console.error('Form submission error:', error);
+          throw error; // Re-throw to be caught by the outer catch
+        }
+      } else {
+        console.log('Moving to next step');
+        setActiveStep(prev => {
+          const nextStep = prev + 1;
+          console.log('Setting next step to:', nextStep);
+          return nextStep < visibleSteps.length ? nextStep : prev;
+        });
+        
+        // Scroll to top of form
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } catch (error) {
+      if (error instanceof Yup.ValidationError) {
+        const formErrors: FormikErrors<FormValues> = {};
+        
+        error.inner.forEach(validationError => {
+          if (validationError.path) {
+            (formErrors as any)[validationError.path] = validationError.message;
+          }
+        });
+        
+        formik.setErrors(formErrors);
+      } else if (error instanceof Error) {
+        setError(error.message);
+      } else {
+        setError('An unknown error occurred');
+      }
+    }
+  }, [currentStep, formik, isLastStep, validationSchema, visibleSteps.length]);
+
   const handleBack = useCallback(() => {
-    setActiveStep(prev => Math.max(prev - 1, 0));
+    setActiveStep(prev => Math.max(0, prev - 1));
   }, []);
 
-  // Render form steps
-  const renderStepContent = (step: number) => {
+  const handleCloseSuccess = useCallback(() => {
+    setShowSuccess(false);
+    navigate('/login');
+  }, [navigate]);
+
+  const renderStepContent = useCallback((step: number) => {
+    if (!currentStep) return <div>Loading...</div>;
+    
     switch (step) {
       case 0: // Account Type
         return (
-          <FormControl fullWidth margin="normal" error={formik.touched.userType && Boolean(formik.errors.userType)}>
-            <InputLabel id="user-type-label">I am a</InputLabel>
+          <FormControl fullWidth margin="normal">
+            <InputLabel id="user-type-label">Account Type</InputLabel>
             <Select
               labelId="user-type-label"
+              id="userType"
               name="userType"
               value={formik.values.userType}
               onChange={formik.handleChange}
               onBlur={formik.handleBlur}
-              label="I am a"
+              error={formik.touched.userType && Boolean(formik.errors.userType)}
+              label="Account Type"
             >
               <MenuItem value="CUSTOMER">Customer</MenuItem>
               <MenuItem value="STORE_OWNER">Store Owner</MenuItem>
             </Select>
-            {formik.touched.userType && formik.errors.userType && (
-              <FormHelperText>{formik.errors.userType}</FormHelperText>
-            )}
+            <FormHelperText error>
+              {formik.touched.userType && formik.errors.userType}
+            </FormHelperText>
           </FormControl>
         );
       
-      case 1: // Personal Information
+      case 1: // Personal Info
         return (
           <>
             <TextField
               fullWidth
-              margin="normal"
+              id="name"
               name="name"
               label="Full Name"
               value={formik.values.name}
@@ -386,10 +386,44 @@ const RegisterPage = () => {
               onBlur={formik.handleBlur}
               error={formik.touched.name && Boolean(formik.errors.name)}
               helperText={formik.touched.name && formik.errors.name}
+              margin="normal"
+              required
+              variant="outlined"
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '8px',
+                  '&.Mui-focused fieldset': {
+                    borderColor: 'primary.main',
+                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
+                  },
+                  '&:hover fieldset': {
+                    borderColor: 'action.hover'
+                  }
+                },
+                '& .MuiInputLabel-root': {
+                  color: 'text.secondary',
+                  '&.Mui-focused': {
+                    color: 'primary.main',
+                    fontWeight: 500
+                  }
+                },
+                '& .MuiFormHelperText-root': {
+                  marginLeft: 0,
+                  marginTop: 1
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <PersonOutlineOutlined color="action" />
+                  </InputAdornment>
+                )
+              }}
             />
             <TextField
               fullWidth
               margin="normal"
+              id="email"
               name="email"
               label="Email"
               type="email"
@@ -398,27 +432,35 @@ const RegisterPage = () => {
               onBlur={formik.handleBlur}
               error={formik.touched.email && Boolean(formik.errors.email)}
               helperText={formik.touched.email && formik.errors.email}
+              variant="outlined"
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '8px',
+                  '&.Mui-focused fieldset': {
+                    borderColor: 'primary.main',
+                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
+                  },
+                  '&:hover fieldset': {
+                    borderColor: 'action.hover'
+                  }
+                },
+                '& .MuiInputLabel-root.Mui-focused': {
+                  color: 'primary.main',
+                  fontWeight: 500
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <EmailOutlined color="action" />
+                  </InputAdornment>
+                )
+              }}
             />
             <TextField
               fullWidth
               margin="normal"
-              name="phone"
-              label="Phone Number"
-              value={formik.values.phone}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.phone && Boolean(formik.errors.phone)}
-              helperText={formik.touched.phone && formik.errors.phone}
-            />
-          </>
-        );
-
-      case 2: // Password
-        return (
-          <>
-            <TextField
-              fullWidth
-              margin="normal"
+              id="password"
               name="password"
               label="Password"
               type="password"
@@ -427,6 +469,30 @@ const RegisterPage = () => {
               onBlur={formik.handleBlur}
               error={formik.touched.password && Boolean(formik.errors.password)}
               helperText={formik.touched.password && formik.errors.password}
+              variant="outlined"
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '8px',
+                  '&.Mui-focused fieldset': {
+                    borderColor: 'primary.main',
+                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
+                  },
+                  '&:hover fieldset': {
+                    borderColor: 'action.hover'
+                  }
+                },
+                '& .MuiInputLabel-root.Mui-focused': {
+                  color: 'primary.main',
+                  fontWeight: 500
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <LockOutlined color="action" />
+                  </InputAdornment>
+                )
+              }}
             />
             <TextField
               fullWidth
@@ -439,19 +505,42 @@ const RegisterPage = () => {
               onBlur={formik.handleBlur}
               error={formik.touched.confirmPassword && Boolean(formik.errors.confirmPassword)}
               helperText={formik.touched.confirmPassword && formik.errors.confirmPassword}
+              variant="outlined"
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '8px',
+                  '&.Mui-focused fieldset': {
+                    borderColor: 'primary.main',
+                    boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.2)'
+                  },
+                  '&:hover fieldset': {
+                    borderColor: 'action.hover'
+                  }
+                },
+                '& .MuiInputLabel-root.Mui-focused': {
+                  color: 'primary.main',
+                  fontWeight: 500
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <LockOutlined color="action" />
+                  </InputAdornment>
+                )
+              }}
             />
           </>
         );
 
-      case 3: // Store Information (only for store owners)
-        if (formik.values.userType !== 'STORE_OWNER') {
-          return null;
-        }
+      case 2: // Store Info
+        if (formik.values.userType !== 'STORE_OWNER') return null;
         return (
           <>
             <TextField
               fullWidth
               margin="normal"
+              id="storeName"
               name="storeName"
               label="Store Name"
               value={formik.values.storeName}
@@ -463,6 +552,7 @@ const RegisterPage = () => {
             <TextField
               fullWidth
               margin="normal"
+              id="address"
               name="address"
               label="Store Address"
               multiline
@@ -476,34 +566,38 @@ const RegisterPage = () => {
           </>
         );
 
-      case 4: // Security Questions
+      case 3: // Security Questions
         return (
           <>
-            <FormControl fullWidth margin="normal" error={formik.touched.securityQuestion1 && Boolean(formik.errors.securityQuestion1)}>
-              <InputLabel>Security Question 1</InputLabel>
+            <FormControl fullWidth margin="normal">
+              <InputLabel id="security-question-1">Security Question 1</InputLabel>
               <Select
+                labelId="security-question-1"
+                id="securityQuestion1"
                 name="securityQuestion1"
                 value={formik.values.securityQuestion1}
                 onChange={formik.handleChange}
                 onBlur={formik.handleBlur}
+                error={formik.touched.securityQuestion1 && Boolean(formik.errors.securityQuestion1)}
                 label="Security Question 1"
               >
-                {securityQuestions.map((question, index) => (
-                  <MenuItem key={`q1-${index}`} value={question}>
+                {securityQuestions.map((question) => (
+                  <MenuItem key={question} value={question}>
                     {question}
                   </MenuItem>
                 ))}
               </Select>
-              {formik.touched.securityQuestion1 && formik.errors.securityQuestion1 && (
-                <FormHelperText>{formik.errors.securityQuestion1}</FormHelperText>
-              )}
+              <FormHelperText error>
+                {formik.touched.securityQuestion1 && formik.errors.securityQuestion1}
+              </FormHelperText>
             </FormControl>
-            
+
             <TextField
               fullWidth
               margin="normal"
+              id="securityAnswer1"
               name="securityAnswer1"
-              label="Answer"
+              label="Answer 1"
               value={formik.values.securityAnswer1}
               onChange={formik.handleChange}
               onBlur={formik.handleBlur}
@@ -511,56 +605,66 @@ const RegisterPage = () => {
               helperText={formik.touched.securityAnswer1 && formik.errors.securityAnswer1}
             />
 
-            <FormControl fullWidth margin="normal" error={formik.touched.securityQuestion2 && Boolean(formik.errors.securityQuestion2)}>
-              <InputLabel>Security Question 2</InputLabel>
+            <FormControl fullWidth margin="normal">
+              <InputLabel id="security-question-2">Security Question 2</InputLabel>
               <Select
+                labelId="security-question-2"
+                id="securityQuestion2"
                 name="securityQuestion2"
                 value={formik.values.securityQuestion2}
                 onChange={formik.handleChange}
                 onBlur={formik.handleBlur}
+                error={formik.touched.securityQuestion2 && Boolean(formik.errors.securityQuestion2)}
                 label="Security Question 2"
               >
                 {securityQuestions
                   .filter(q => q !== formik.values.securityQuestion1)
-                  .map((question, index) => (
-                    <MenuItem key={`q2-${index}`} value={question}>
+                  .map((question) => (
+                    <MenuItem key={question} value={question}>
                       {question}
                     </MenuItem>
                   ))}
               </Select>
-              {formik.touched.securityQuestion2 && formik.errors.securityQuestion2 && (
-                <FormHelperText>{formik.errors.securityQuestion2}</FormHelperText>
-              )}
+              <FormHelperText error>
+                {formik.touched.securityQuestion2 && formik.errors.securityQuestion2}
+              </FormHelperText>
             </FormControl>
-            
+
             <TextField
               fullWidth
               margin="normal"
+              id="securityAnswer2"
               name="securityAnswer2"
-              label="Answer"
+              label="Answer 2"
               value={formik.values.securityAnswer2}
               onChange={formik.handleChange}
               onBlur={formik.handleBlur}
               error={formik.touched.securityAnswer2 && Boolean(formik.errors.securityAnswer2)}
               helperText={formik.touched.securityAnswer2 && formik.errors.securityAnswer2}
             />
+          </>
+        );
 
+      case 4: // Preferences
+        return (
+          <>
             <FormControlLabel
               control={
-                <Switch
-                  name="enable2FA"
+                <Checkbox
                   checked={formik.values.enable2FA}
                   onChange={formik.handleChange}
+                  name="enable2FA"
                   color="primary"
                 />
               }
-              label="Enable Two-Factor Authentication"
+              label="Enable Two-Factor Authentication (2FA)"
             />
 
             {formik.values.enable2FA && (
               <TextField
                 fullWidth
                 margin="normal"
+                id="phoneFor2FA"
                 name="phoneFor2FA"
                 label="Phone Number for 2FA"
                 value={formik.values.phoneFor2FA}
@@ -570,128 +674,279 @@ const RegisterPage = () => {
                 helperText={formik.touched.phoneFor2FA && formik.errors.phoneFor2FA}
               />
             )}
-          </>
-        );
 
-      case 5: // Terms and Conditions
-        return (
-          <>
-            <Typography variant="body1" paragraph>
-              Please read and accept our Terms and Conditions and Privacy Policy.
-            </Typography>
-            <FormControl 
+            <FormControl
+              required
               error={formik.touched.acceptTerms && Boolean(formik.errors.acceptTerms)}
               component="fieldset"
-              variant="standard"
-              fullWidth
-              margin="normal"
+              sx={{ mt: 2 }}
             >
               <FormControlLabel
                 control={
-                  <input
-                    type="checkbox"
-                    name="acceptTerms"
+                  <Checkbox
                     checked={formik.values.acceptTerms}
                     onChange={formik.handleChange}
-                    onBlur={formik.handleBlur}
+                    name="acceptTerms"
                   />
                 }
-                label="I agree to the Terms and Conditions and Privacy Policy"
+                label={
+                  <span>
+                    I agree to the{' '}
+                    <Link href="/terms" target="_blank" rel="noopener noreferrer">
+                      Terms of Service
+                    </Link>{' '}
+                    and{' '}
+                    <Link href="/privacy" target="_blank" rel="noopener noreferrer">
+                      Privacy Policy
+                    </Link>
+                  </span>
+                }
               />
-              {formik.touched.acceptTerms && formik.errors.acceptTerms && (
-                <FormHelperText>{formik.errors.acceptTerms}</FormHelperText>
-              )}
+              <FormHelperText>
+                {formik.touched.acceptTerms && formik.errors.acceptTerms}
+              </FormHelperText>
             </FormControl>
           </>
         );
 
       default:
-        return <Typography>Unknown step</Typography>;
+        return <div>Unknown step</div>;
     }
-  };
+  }, [currentStep, formik.values, formik.handleChange, formik.handleBlur, formik.touched, formik.errors]);
 
   return (
-    <Box sx={{ maxWidth: 600, mx: 'auto', p: 3, mt: 4, mb: 8 }}>
-      <Typography variant="h4" component="h1" gutterBottom align="center">
-        Create an Account
-      </Typography>
-      
-      <Box sx={{ mb: 4, textAlign: 'center' }}>
-        <Typography variant="subtitle1" color="textSecondary">
-          Step {activeStep + 1} of {formSteps.length}: {formSteps[activeStep]?.label}
-        </Typography>
-      </Box>
-      
+    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
       <Box 
-        component="form" 
-        onSubmit={formik.handleSubmit}
-        sx={{
-          backgroundColor: 'background.paper',
-          p: 4,
-          borderRadius: 2,
-          boxShadow: 1,
+        sx={{ 
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          p: { xs: 2, sm: 3, md: 4 },
+          maxWidth: 800,
+          mx: 'auto',
+          width: '100%'
         }}
       >
-        {renderStepContent(activeStep)}
-        
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 4, pt: 2, borderTop: '1px solid #eee' }}>
+        <Paper 
+          elevation={3} 
+          sx={{ 
+            p: { xs: 2, sm: 3, md: 4 },
+            borderRadius: 2,
+            bgcolor: 'background.paper',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.08)'
+          }}
+        >
+          <Box textAlign="center" mb={4}>
+            <Typography 
+              variant="h4" 
+              component="h1" 
+              gutterBottom 
+              sx={{ 
+                fontWeight: 700,
+                color: 'primary.main',
+                fontSize: { xs: '1.8rem', sm: '2.125rem' },
+                mb: 1
+              }}
+            >
+              Create an Account
+            </Typography>
+            <Typography 
+              variant="body1" 
+              color="text.secondary"
+              sx={{ mb: 3 }}
+            >
+              Join our platform to get started
+            </Typography>
+          </Box>
+
+        <Stepper 
+          activeStep={activeStep} 
+          alternativeLabel 
+          sx={{ 
+            mb: 4,
+            '& .MuiStepLabel-label': {
+              fontSize: '0.75rem',
+              '&.Mui-active, &.Mui-completed': {
+                fontWeight: 600
+              }
+            }
+          }}
+        >
+          {visibleSteps.map((step, index) => (
+            <Step 
+              key={step.label} 
+              completed={activeStep > index}
+            >
+              <StepLabel 
+                StepIconProps={{
+                  sx: {
+                    '&.Mui-completed': {
+                      color: 'success.main',
+                    },
+                    '&.Mui-active': {
+                      color: 'primary.main',
+                    },
+                  },
+                }}
+              >
+                {step.label}
+              </StepLabel>
+            </Step>
+          ))}
+        </Stepper>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
+
+      <Box 
+        component="form" 
+        noValidate
+        sx={{ width: '100%' }}
+      >
+        <Box 
+          mb={4}
+          sx={{
+            minHeight: '300px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
+          }}
+        >
+          <Fade in={true} timeout={300}>
+            <Box>
+              {renderStepContent(activeStep)}
+            </Box>
+          </Fade>
+        </Box>
+
+        <Box 
+          display="flex" 
+          justifyContent="space-between" 
+          mt={4}
+          pt={2}
+          sx={{
+            borderTop: '1px solid',
+            borderColor: 'divider',
+            '& > *:not(:first-of-type)': {
+              ml: 2
+            }
+          }}
+        >
           <Button
-            variant="outlined"
-            disabled={activeStep === 0 || formik.isSubmitting}
             onClick={handleBack}
-            sx={{ minWidth: 100 }}
+            disabled={activeStep === 0 || formik.isSubmitting}
+            variant="outlined"
+            color="inherit"
+            sx={{
+              minWidth: '100px',
+              textTransform: 'none',
+              fontWeight: 500,
+              borderRadius: '8px',
+              py: 1,
+              '&:hover': {
+                bgcolor: 'action.hover'
+              }
+            }}
           >
             Back
           </Button>
-          
-          <Button
-            type="submit"
-            variant="contained"
-            color="primary"
-            disabled={formik.isSubmitting || (activeStep === formSteps.length - 1 && !formik.values.acceptTerms)}
-            sx={{ minWidth: 150 }}
-          >
-            {formik.isSubmitting ? 'Processing...' : 
-             activeStep === formSteps.length - 1 ? 'Complete Registration' : 'Next'}
-          </Button>
+          <Box sx={{ position: 'relative' }}>
+            <Button
+              type="button"
+              variant="contained"
+              color="primary"
+              disabled={formik.isSubmitting}
+              onClick={handleNext}
+              sx={{
+                minWidth: '120px',
+                textTransform: 'none',
+                fontWeight: 600,
+                borderRadius: '8px',
+                py: 1,
+                px: 4,
+                boxShadow: '0 2px 10px rgba(25, 118, 210, 0.3)',
+                '&:hover': {
+                  boxShadow: '0 4px 12px rgba(25, 118, 210, 0.4)',
+                },
+                '&.Mui-disabled': {
+                  bgcolor: 'action.disabledBackground',
+                  color: 'action.disabled',
+                  boxShadow: 'none'
+                }
+              }}
+            >
+              {formik.isSubmitting ? (
+                <CircularProgress size={24} color="inherit" />
+              ) : isLastStep ? (
+                'Create Account'
+              ) : (
+                'Continue'
+              )}
+            </Button>
+            {formik.isSubmitting && (
+              <CircularProgress
+                size={24}
+                sx={{
+                  color: 'primary.main',
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  marginTop: '-12px',
+                  marginLeft: '-12px',
+                }}
+              />
+            )}
+          </Box>
         </Box>
-      </Box>
-      
-      <Box sx={{ mt: 3, textAlign: 'center' }}>
-        <Typography variant="body2" color="textSecondary">
-          Already have an account?{' '}
-          <Button 
-            color="primary" 
-            size="small" 
-            onClick={() => navigate('/login')}
-            sx={{ textTransform: 'none' }}
-          >
-            Sign In
-          </Button>
-        </Typography>
-      </Box>
 
-      {/* Success Dialog */}
-      <Dialog
-        open={showSuccess}
-        onClose={handleCloseSuccess}
-        aria-labelledby="registration-success-dialog"
-      >
-        <DialogTitle>Registration Successful!</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Your account has been created successfully. You will be redirected to the login page.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseSuccess} color="primary" autoFocus>
-            OK
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
-  );
+        <Box mt={3} textAlign="center">
+          <Typography variant="body2" color="text.secondary">
+            Already have an account?{' '}
+            <Link 
+              href="/login" 
+              color="primary" 
+              sx={{ 
+                fontWeight: 600,
+                textDecoration: 'none',
+                '&:hover': {
+                  textDecoration: 'underline',
+                },
+                cursor: 'pointer'
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                navigate('/login');
+              }}
+            >
+              Sign In
+            </Link>
+          </Typography>
+        </Box>
+
+      </Box>
+    </Paper>
+  </Box>
+
+  {/* Success Dialog */}
+  <Dialog open={showSuccess} onClose={handleCloseSuccess}>
+    <DialogTitle>Registration Successful!</DialogTitle>
+    <DialogContent>
+      <DialogContentText>
+        Your account has been created successfully. You will be redirected to the login page.
+      </DialogContentText>
+    </DialogContent>
+    <DialogActions>
+      <Button onClick={handleCloseSuccess} color="primary" autoFocus>
+        OK
+      </Button>
+    </DialogActions>
+  </Dialog>
+</Box>
+);
 };
 
-// Export the component as default
 export default RegisterPage;

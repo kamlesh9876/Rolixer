@@ -13,6 +13,7 @@ import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto, ChangePasswordDto } from './dto/update-user.dto';
 import { UserRole } from './entities/user.entity';
+import { Store, StoreStatus } from '../stores/entities/store.entity';
 
 type UserQueryOptions = {
   search?: string;
@@ -30,7 +31,13 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private usersRepository: Repository<User>,
+    @InjectRepository(Store)
+    private storeRepository: Repository<Store>,
   ) {}
+
+  async findOneByEmail(email: string): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { email } });
+  }
 
   async create(createUserDto: CreateUserDto, currentUserRole?: UserRole): Promise<User> {
     // Check if email already exists
@@ -126,9 +133,16 @@ export class UsersService {
       throw new ForbiddenException('You can only update your own profile');
     }
 
-    // Only admins can change roles
-    if (updateUserDto.role && currentUserRole !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only admins can change user roles');
+    // If not admin, ensure role is not being changed to admin
+    if (currentUserRole && currentUserRole !== UserRole.ADMIN) {
+      if (updateUserDto.role && updateUserDto.role === UserRole.ADMIN) {
+        throw new ForbiddenException('You cannot assign admin role');
+      }
+      
+      // Non-admin users cannot change roles
+      if (updateUserDto.role && updateUserDto.role !== user.role) {
+        throw new ForbiddenException('Only admins can change user roles');
+      }
     }
 
     // Check if email is being updated and if it's already in use
@@ -149,8 +163,7 @@ export class UsersService {
   async changePassword(
     id: string, 
     changePasswordDto: ChangePasswordDto, 
-    currentUserId?: string,
-    currentUserRole?: UserRole,
+    currentUser: any,
   ): Promise<void> {
     const user = await this.usersRepository.findOne({ 
       where: { id },
@@ -158,16 +171,16 @@ export class UsersService {
     });
 
     if (!user) {
-      throw new NotFoundException(`User with ID ${id} not found`);
+      throw new NotFoundException('User not found');
     }
 
-    // Check if the current user is updating their own password or is an admin
-    if (currentUserId && currentUserId !== id && currentUserRole !== UserRole.ADMIN) {
+    // Check if current user is admin or the same user
+    if (currentUser.role !== UserRole.ADMIN && currentUser.userId !== id) {
       throw new ForbiddenException('You can only change your own password');
     }
 
-    // If admin is changing the password, skip current password check
-    if (currentUserRole !== UserRole.ADMIN || currentUserId === id) {
+    // If not admin, verify current password
+    if (currentUser.role !== UserRole.ADMIN) {
       const isPasswordValid = await bcrypt.compare(
         changePasswordDto.currentPassword,
         user.password,
@@ -178,12 +191,79 @@ export class UsersService {
       }
     }
 
+    // Check if new password matches confirm password
     if (changePasswordDto.newPassword !== changePasswordDto.confirmNewPassword) {
-      throw new BadRequestException('New passwords do not match');
+      throw new BadRequestException('New password and confirm password do not match');
     }
 
-    user.password = changePasswordDto.newPassword; // The password will be hashed by the @BeforeInsert() hook
+    // Hash and update password
+    const salt = await bcrypt.genSalt();
+    user.password = await bcrypt.hash(changePasswordDto.newPassword, salt);
+    
     await this.usersRepository.save(user);
+  }
+
+  async registerStoreOwner(
+    createUserDto: CreateUserDto,
+    storeData: { name: string; address: string; description?: string },
+  ) {
+    // Check if user already exists
+    const existingUser = await this.usersRepository.findOne({
+      where: { email: createUserDto.email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // Create user with STORE_OWNER role
+    const user = this.usersRepository.create({
+      ...createUserDto,
+      role: UserRole.STORE_OWNER,
+    });
+
+    // Hash password
+    const salt = await bcrypt.genSalt();
+    user.password = await bcrypt.hash(createUserDto.password, salt);
+
+    // Save user
+    const savedUser = await this.usersRepository.save(user);
+
+    // Create store with proper typing and required fields
+    const store = this.storeRepository.create({
+      name: storeData.name,
+      address: storeData.address,
+      email: createUserDto.email, // Using the same email as the owner
+      description: storeData.description || '',
+      owner: savedUser,
+      ownerId: savedUser.id,
+      status: StoreStatus.PENDING,
+      businessHours: {},
+      averageRating: 0,
+      totalRatings: 0,
+      isFeatured: false,
+      phone: '', // Required field, can be updated later
+      website: '' // Optional field
+    });
+
+    await this.storeRepository.save(store);
+
+    // Send verification email
+    // TODO: Implement email verification
+
+    return {
+      user: {
+        id: savedUser.id,
+        name: savedUser.name,
+        email: savedUser.email,
+        role: savedUser.role,
+      },
+      store: {
+        id: store.id,
+        name: store.name,
+        status: store.status,
+      },
+    };
   }
 
   async remove(id: string, currentUserId?: string, currentUserRole?: UserRole): Promise<void> {
@@ -226,7 +306,7 @@ export class UsersService {
       this.usersRepository.count(),
       this.usersRepository.count({ where: { role: UserRole.ADMIN } }),
       this.usersRepository.count({ where: { role: UserRole.STORE_OWNER } }),
-      this.usersRepository.count({ where: { role: UserRole.USER } }),
+      this.usersRepository.count({ where: { role: UserRole.CUSTOMER } }),
     ]);
 
     return {

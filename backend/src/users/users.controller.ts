@@ -70,7 +70,7 @@ export class UsersController {
     
     return this.usersService.findAll({
       search,
-      role: isAdmin ? role : UserRole.USER, // Non-admins can only see regular users
+      role: isAdmin ? role : UserRole.CUSTOMER, // Non-admins can only see regular users
       page,
       limit,
       sortBy,
@@ -114,7 +114,7 @@ export class UsersController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.USER)
+  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.CUSTOMER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get user by ID' })
   @ApiResponse({ status: 200, description: 'User found' })
@@ -133,7 +133,7 @@ export class UsersController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.USER)
+  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.CUSTOMER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update user' })
   @ApiResponse({ status: 200, description: 'User updated' })
@@ -149,12 +149,12 @@ export class UsersController {
     if (req.user.role !== UserRole.ADMIN && req.user.userId !== id) {
       throw new BadRequestException('You can only update your own profile');
     }
-    return this.usersService.update(id, updateUserDto, req.user.userId, req.user.role);
+    return this.usersService.update(id, updateUserDto, req.user.userId, req.user.role as UserRole);
   }
 
   @Patch(':id/change-password')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.USER)
+  @Roles(UserRole.ADMIN, UserRole.STORE_OWNER, UserRole.CUSTOMER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Change user password' })
   @ApiResponse({ status: 200, description: 'Password changed successfully' })
@@ -175,8 +175,7 @@ export class UsersController {
     await this.usersService.changePassword(
       id,
       changePasswordDto,
-      req.user.userId,
-      req.user.role,
+      { userId: req.user.userId, role: req.user.role as UserRole },
     );
     
     return { message: 'Password changed successfully' };
@@ -191,7 +190,7 @@ export class UsersController {
   @ApiResponse({ status: 400, description: 'Bad request' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'User not found' })
-  remove(
+  async remove(
     @Param('id') id: string,
     @Req() req,
   ) {
@@ -200,6 +199,7 @@ export class UsersController {
       throw new BadRequestException('You cannot delete your own account');
     }
     
-    return this.usersService.remove(id, req.user.userId, req.user.role);
+    await this.usersService.remove(id, req.user.userId, req.user.role as UserRole);
+    return { message: 'User deleted successfully' };
   }
 }

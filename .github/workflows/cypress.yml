@@ -1,0 +1,125 @@
+name: Cypress Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+# Cancel in-progress runs for PRs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20.x'
+  CYPRESS_RETRIES: 2
+  CYPRESS_BASE_URL: http://localhost:3000
+
+jobs:
+  test:
+    name: Cypress Tests
+    runs-on: ubuntu-latest
+    
+    # Use a matrix to run tests in parallel containers
+    strategy:
+      fail-fast: false
+      matrix:
+        containers: [1, 2]  # Number of parallel containers
+        include:
+          - containers: 1
+            cypress_group: 'group-1'
+          - containers: 2
+            cypress_group: 'group-2'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/Cypress
+            node_modules
+          key: ${{ runner.os }}-cypress-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-cypress-
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run Cypress tests
+        uses: cypress-io/github-action@v6
+        with:
+          # Start the server in the background
+          start: npm run dev
+          wait-on: ${{ env.CYPRESS_BASE_URL }}
+          wait-on-timeout: 120
+          
+          # Test configuration
+          browser: chrome
+          group: "Tests on Chrome - ${{ matrix.cypress_group }}"
+          record: ${{ github.event_name != 'pull_request' }}
+          parallel: true
+          
+          # Artifacts
+          build: npm run build
+          upload: true
+          
+          # Retries
+          retries: ${{ env.CYPRESS_RETRIES }}
+          
+        env:
+          # Authentication
+          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Application environment variables
+          NODE_ENV: test
+          CYPRESS_VERIFY_TIMEOUT: 60000
+          
+          # Database configuration
+          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          
+          # API configuration
+          API_URL: ${{ secrets.API_URL || 'http://localhost:3000/api' }}
+          
+          # Authentication
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          
+          # Feature flags
+          FEATURE_FLAG_NEW_UI: 'true'
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots
+          retention-days: 7
+      
+      - name: Upload videos
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos
+          path: cypress/videos
+          retention-days: 7
+      
+      - name: Notify Slack on failure
+        if: failure()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: '#ff0000'
+          SLACK_TITLE: 'Cypress Tests Failed'
+          SLACK_MESSAGE: 'Cypress tests failed in ${{ github.workflow }}. ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

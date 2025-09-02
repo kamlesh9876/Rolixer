@@ -1,0 +1,82 @@
+import { 
+  IsString, 
+  IsOptional, 
+  Length, 
+  IsEmail, 
+  IsEnum, 
+  IsNotEmpty, 
+  Matches, 
+  IsBoolean, 
+  IsArray, 
+  ValidateNested,
+  IsPhoneNumber
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { UserRole } from '../entities/user.entity';
+
+class SecurityQuestionDto {
+  @IsString()
+  @IsNotEmpty()
+  id?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  question: string;
+
+  @IsString()
+  @IsNotEmpty()
+  answer: string;
+}
+
+export class UpdateUserDto {
+  @IsString()
+  @IsOptional()
+  @Length(2, 60, { message: 'Name must be between 2 and 60 characters' })
+  name?: string;
+
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsOptional()
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  @Length(0, 400, { message: 'Address cannot exceed 400 characters' })
+  address?: string;
+
+  @IsString()
+  @IsOptional()
+  @Length(10, 15, { message: 'Phone number must be between 10 and 15 digits' })
+  phone?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  emailVerified?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  twoFactorEnabled?: boolean;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SecurityQuestionDto)
+  @IsOptional()
+  securityQuestions?: SecurityQuestionDto[];
+
+  @IsString()
+  @IsOptional()
+  @Length(0, 1000, { message: 'Profile bio cannot exceed 1000 characters' })
+  profileBio?: string;
+
+  @IsString()
+  @IsOptional()
+  @Length(0, 200, { message: 'Profile picture URL cannot exceed 200 characters' })
+  profilePicture?: string;
+
+  @IsEnum(UserRole, { message: 'Invalid user role' })
+  @IsOptional()
+  role?: UserRole;
+}
